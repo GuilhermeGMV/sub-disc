@@ -1,0 +1,95 @@
+name: subdisc
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_ORIGIN: ${APP_ORIGIN:?Configure APP_ORIGIN}
+      SETUP_KEY: ${SETUP_KEY:?Configure SETUP_KEY}
+      LIVEKIT_URL: ${LIVEKIT_URL:?Configure LIVEKIT_URL}
+      LIVEKIT_INTERNAL_URL: http://livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Configure LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Configure LIVEKIT_API_SECRET}
+      DATABASE_URL: sqlite:///data/subdisc.db
+      STATIC_DIR: /app/public
+      RUST_LOG: subdisc=info
+    volumes:
+      - app_data:/data
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  livekit:
+    image: livekit/livekit-server:v1.13.10
+    restart: unless-stopped
+    command: [--config, /etc/livekit.yaml]
+    environment:
+      LIVEKIT_KEYS: '${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}'
+    configs:
+      - source: livekit
+        target: /etc/livekit.yaml
+    ports:
+      - '7881:7881/tcp'
+      - '7882:7882/udp'
+      - '3478:3478/udp'
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:7880/']
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+  caddy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    environment:
+      APP_ADDRESS: ${APP_ADDRESS:?Configure APP_ADDRESS}
+      MEDIA_ADDRESS: ${MEDIA_ADDRESS:?Configure MEDIA_ADDRESS}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+      - '8080:8080'
+      - '7880:7880'
+    volumes:
+      - ./infrastructure/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:2019/config/']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+configs:
+  livekit:
+    content: |
+      port: 7880
+      bind_addresses: [0.0.0.0]
+      rtc:
+        tcp_port: 7881
+        udp_port: 7882
+        node_ip: ${LIVEKIT_NODE_IP:?Configure LIVEKIT_NODE_IP}
+        use_external_ip: false
+        enable_loopback_candidate: ${LIVEKIT_LOOPBACK:-false}
+      webhook:
+        api_key: ${LIVEKIT_API_KEY}
+        urls: [http://app:3000/api/livekit/webhook]
+      turn:
+        enabled: ${TURN_ENABLED:-false}
+        domain: '${TURN_DOMAIN:-}'
+        udp_port: 3478
+      room:
+        max_participants: 20
+        empty_timeout: 300
+      logging:
+        level: info
+        json: true
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:

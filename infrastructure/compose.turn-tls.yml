@@ -1,0 +1,35 @@
+# Aplicar junto de docker-compose.yml; caminhos relativos à raiz do projeto.
+services:
+  livekit:
+    environment:
+      LIVEKIT_TURN_CERT: /certs/fullchain.pem
+      LIVEKIT_TURN_KEY: /certs/privkey.pem
+    volumes:
+      - ./infrastructure/certs:/certs:ro
+    ports:
+      - '5349:5349/tcp'
+configs:
+  livekit:
+    content: |
+      port: 7880
+      bind_addresses: [0.0.0.0]
+      rtc:
+        tcp_port: 7881
+        udp_port: 7882
+        node_ip: ${LIVEKIT_NODE_IP:?Configure LIVEKIT_NODE_IP}
+        use_external_ip: false
+        enable_loopback_candidate: false
+      webhook:
+        api_key: ${LIVEKIT_API_KEY}
+        urls: [http://app:3000/api/livekit/webhook]
+      turn:
+        enabled: true
+        domain: ${TURN_DOMAIN:?Configure TURN_DOMAIN}
+        tls_port: 5349
+        udp_port: 3478
+      room:
+        max_participants: 20
+        empty_timeout: 300
+      logging:
+        level: info
+        json: true
