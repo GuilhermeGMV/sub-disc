@@ -2,7 +2,7 @@
 
 Comunicação privada para pequenos grupos: chat persistente, salas de voz permanentes, webcam e tela ao vivo. Interface em português brasileiro, dark-first, sem contas externas, telemetria obrigatória ou serviços de nuvem. Código original sob licença MIT.
 
-**Estado: MVP implementado e validado nativamente; entrega parcialmente concluída nos critérios de implantação.** Dois navegadores passaram pelo fluxo real de chat e WebRTC com LiveKit local. O Docker daemon deste ambiente está indisponível: o Compose foi validado como configuração, mas ainda precisa ser executado. Internet, TURN/TLS, dispositivos físicos e ARM64 também precisam da validação descrita em [docs/testing.md](docs/testing.md).
+**Estado: MVP implementado e validado nativamente; entrega parcialmente concluída nos critérios de implantação.** Dois navegadores passaram pelo fluxo real de chat e WebRTC com LiveKit local. O Docker Desktop está inativo e o Docker Engine padrão nega acesso ao socket; sudo exige senha. O Compose foi validado como configuração, mas ainda precisa ser executado. Internet, TURN/TLS, dispositivos físicos e ARM64 também precisam da validação descrita em [docs/testing.md](docs/testing.md).
 
 ## Executar com Docker
 

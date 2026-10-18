@@ -12,6 +12,7 @@ Data de execução: 18/10/2026. Plataforma: Linux x86_64, Rust 1.99.1, Node 24.1
 | Reinício de processo | Sessão, conta, canais e mensagem preservados |
 | Svelte/TypeScript | Zero erros e zero avisos |
 | Clippy `--all-targets -D warnings` | Passou |
+| Rust `cargo build --release --locked` | Passou; binário otimizado também passou por persistência e E2E |
 | Vite produção | Passou; SDK separado com 532,29 kB (138,16 kB gzip) |
 | Caddy 2.11.7 | Configuração válida |
 | Compose básico e sobreposição TURN/TLS | Configuração válida |
@@ -64,9 +65,11 @@ Os testes precisam abrir sockets locais. No sandbox desta sessão, isso exigiu e
 | Microfone, deafen e desconexão | E2E e estados remotos |
 | Volume individual, dispositivos e qualidade | Implementado; requer checagem manual física |
 | Canais vazios após reiniciar | Teste de persistência |
-| Docker Compose em execução | **Pendente: daemon indisponível no ambiente** |
+| Docker Compose em execução | **Pendente: Docker Desktop inativo; Engine sem permissão de socket** |
 | HTTPS público, NAT, TURN/TLS | **Pendente: exige domínio e rede reais** |
 | Linux ARM64 | **Pendente: não executado nesta máquina x86_64** |
+
+Docker: o contexto `desktop-linux` não tem daemon ativo; `default` falhou com permissão negada em `/var/run/docker.sock`; `sudo -n` exigiu senha. Não foram alteradas permissões do host nem solicitadas senhas.
 
 A entrega permanece **parcialmente concluída** quanto aos critérios globais, mesmo com o fluxo nativo funcional. Nenhum resultado de build/configuração é apresentado como prova de implantação Docker ou de conectividade pela internet.
 

@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory(prefix='subdisc-persistence-') as tmp:
         request=urllib.request.Request(origin+'/api'+path,data=None if data is None else json.dumps(data).encode(),headers={'Origin':origin,'Content-Type':'application/json'})
         with opener.open(request,timeout=3) as response:return json.load(response)
     def start():
-        proc=subprocess.Popen([str(root/'backend/target/debug/subdisc')],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        proc=subprocess.Popen([os.environ.get('SUBDISC_BINARY',str(root/'backend/target/debug/subdisc'))],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:call('/health');return proc
             except OSError:

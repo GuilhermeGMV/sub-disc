@@ -28,7 +28,7 @@ subdisc_sfu_pid=$!
 export APP_ENV=development APP_ORIGIN=http://127.0.0.1:18080 BIND=127.0.0.1:18080
 export DATABASE_URL="sqlite://$subdisc_test_dir/test.db" SETUP_KEY=a-safe-setup-test-key STATIC_DIR="$PWD/frontend/dist"
 export LIVEKIT_URL=ws://127.0.0.1:17880 LIVEKIT_INTERNAL_URL=http://127.0.0.1:17880 LIVEKIT_API_KEY=testkey LIVEKIT_API_SECRET=test-secret-at-least-thirty-two-characters
-./backend/target/debug/subdisc > "$subdisc_test_dir/backend.log" 2>&1 &
+"${SUBDISC_BINARY:-$PWD/backend/target/debug/subdisc}" > "$subdisc_test_dir/backend.log" 2>&1 &
 subdisc_api_pid=$!
 printf 'E2E logs: %s\n' "$subdisc_test_dir"
 wait -n "$subdisc_api_pid" "$subdisc_sfu_pid"
