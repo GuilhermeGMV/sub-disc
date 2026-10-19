@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { Track } from 'livekit-client';
   import {
     MicOff,
@@ -16,7 +17,53 @@
       .filter((pub) => pub.track && !pub.isMuted)
       .map((pub) => ({ p, pub, track: pub.track! })),
   );
+  $: if (expanded && !videos.some((v) => v.pub.trackSid === expanded))
+    collapse();
+  type FullscreenTile = HTMLElement & {
+    webkitRequestFullscreen?: () => Promise<void> | void;
+  };
+  type FullscreenDocument = Document & {
+    webkitFullscreenElement?: Element | null;
+    webkitExitFullscreen?: () => Promise<void> | void;
+  };
+  const fullscreenElement = () =>
+    document.fullscreenElement ??
+    (document as FullscreenDocument).webkitFullscreenElement ??
+    null;
+  function collapse() {
+    expanded = '';
+    const doc = document as FullscreenDocument;
+    if (fullscreenElement())
+      void Promise.resolve(
+        doc.exitFullscreen?.() ?? doc.webkitExitFullscreen?.(),
+      ).catch(() => {});
+  }
+  function expand(sid: string, tile: FullscreenTile | null) {
+    expanded = sid;
+    // Sem a API (ex.: Safari no iPhone) o CSS de .expanded ocupa a janela.
+    if (tile)
+      void Promise.resolve(
+        tile.requestFullscreen?.() ?? tile.webkitRequestFullscreen?.(),
+      ).catch(() => {});
+  }
+  function fullscreenChanged() {
+    if (!fullscreenElement() && expanded) expanded = '';
+  }
+  onMount(() => {
+    const events = ['fullscreenchange', 'webkitfullscreenchange'];
+    for (const e of events) document.addEventListener(e, fullscreenChanged);
+    return () => {
+      for (const e of events)
+        document.removeEventListener(e, fullscreenChanged);
+    };
+  });
 </script>
+
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === 'Escape' && expanded) collapse();
+  }}
+/>
 
 <div class="call-stage">
   {#if !$media.room}<div class="empty">
@@ -56,7 +103,13 @@
                 ? 'Tela'
                 : 'Câmera'}<button
                 aria-label={expanded ? 'Reduzir vídeo' : 'Ampliar vídeo'}
-                onclick={() => (expanded = expanded ? '' : v.pub.trackSid)}
+                onclick={(e) =>
+                  expanded
+                    ? collapse()
+                    : expand(
+                        v.pub.trackSid,
+                        e.currentTarget.closest<HTMLElement>('.video-tile'),
+                      )}
                 >{#if expanded}<Minimize2 size={16} />{:else}<Maximize2
                     size={16}
                   />{/if}</button
