@@ -8,6 +8,7 @@ import {
   RemoteParticipant,
   VideoPresets,
   ScreenSharePresets,
+  AudioPresets,
 } from 'livekit-client';
 import { post } from '../lib/api';
 export interface MediaState {
@@ -133,6 +134,7 @@ export async function joinVoice(channelId: string) {
       },
       videoCaptureDefaults: { resolution: VideoPresets.h720.resolution },
       publishDefaults: {
+        audioPreset: AudioPresets.musicHighQuality,
         videoCodec: 'vp8',
         simulcast: true,
         videoEncoding: VideoPresets.h720.encoding,
