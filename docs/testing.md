@@ -65,13 +65,13 @@ Os testes precisam abrir sockets locais. No sandbox desta sessão, isso exigiu e
 | Microfone, deafen e desconexão | E2E e estados remotos |
 | Volume individual, dispositivos e qualidade | Implementado; requer checagem manual física |
 | Canais vazios após reiniciar | Teste de persistência |
-| Docker Compose em execução | **Pendente: Docker Desktop inativo; Engine sem permissão de socket** |
+| Docker Compose em execução | **Executado: app, LiveKit e Caddy saudáveis; HTTP 200 na página, API e SFU** |
 | HTTPS público, NAT, TURN/TLS | **Pendente: exige domínio e rede reais** |
 | Linux ARM64 | **Pendente: não executado nesta máquina x86_64** |
 
-Docker: o contexto `desktop-linux` não tem daemon ativo; `default` falhou com permissão negada em `/var/run/docker.sock`; `sudo -n` exigiu senha. Não foram alteradas permissões do host nem solicitadas senhas.
+Atualização da instalação local: o contexto `desktop-linux` passou a estar disponível. Foram corrigidas credenciais inválidas no `.env` (com cópia privada do anterior), e `docker compose up -d --wait` concluiu com os três serviços saudáveis. Página e `/api/health` em `http://localhost:8080`, `/api/setup` e sinalização em `http://localhost:7880` responderam HTTP 200. O E2E de mídia descrito acima continua sendo da execução nativa; ainda não foi repetido através da rede Docker.
 
-A entrega permanece **parcialmente concluída** quanto aos critérios globais, mesmo com o fluxo nativo funcional. Nenhum resultado de build/configuração é apresentado como prova de implantação Docker ou de conectividade pela internet.
+A entrega permanece **parcialmente concluída** quanto aos critérios globais, mesmo com o fluxo nativo funcional. Os health checks do Compose confirmam a inicialização local, mas não comprovam mídia através da rede Docker nem conectividade pela internet.
 
 ## Validações manuais necessárias
 

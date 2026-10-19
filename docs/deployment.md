@@ -28,6 +28,22 @@ O script gera segredos aleatórios, protege `.env` com modo 0600 e se recusa a s
 
 O Caddy obtém e renova certificados ACME automaticamente para os dois nomes. O acesso externo exige DNS válido, portas 80/443 liberadas e servidor alcançável. Abra `https://conversa.exemplo.com`, consulte a `SETUP_KEY` no `.env` local e crie a primeira conta. Depois da primeira conta, a rota de instalação fica bloqueada por transação no banco.
 
+### DNS dinâmico gratuito (DuckDNS)
+
+Sem domínio próprio, crie uma conta em [duckdns.org](https://www.duckdns.org) e registre um subdomínio, por exemplo `meuchat`. O DuckDNS resolve também os nomes abaixo dele, então um único subdomínio atende aos dois endereços. No `.env`:
+
+```bash
+COMPOSE_PROFILES=duckdns
+DUCKDNS_DOMAIN=meuchat
+DUCKDNS_TOKEN=<token exibido no painel do DuckDNS>
+APP_ORIGIN=https://${DUCKDNS_DOMAIN}.duckdns.org
+APP_ADDRESS=${DUCKDNS_DOMAIN}.duckdns.org
+MEDIA_ADDRESS=rtc.${DUCKDNS_DOMAIN}.duckdns.org
+LIVEKIT_URL=wss://rtc.${DUCKDNS_DOMAIN}.duckdns.org
+```
+
+O serviço `duckdns` envia o IP público atual ao DuckDNS a cada 5 minutos (`docker compose logs duckdns` mostra `OK` ou `KO`). O nome não contém o IP, mas qualquer consulta DNS ainda o revela, assim como os candidatos ICE de uma chamada. Encaminhamento de portas continua obrigatório (veja Portas e NAT). Quando o IP mudar, atualize `LIVEKIT_NODE_IP` e rode `docker compose up -d`.
+
 ## Variáveis
 
 | Variável | Significado |

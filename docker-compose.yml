@@ -65,6 +65,24 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
+  duckdns:
+    image: curlimages/curl:8.11.1
+    profiles: [duckdns]
+    restart: unless-stopped
+    entrypoint: [/bin/sh, -c]
+    command:
+      - |
+        [ -n "$$DUCKDNS_DOMAIN" ] && [ -n "$$DUCKDNS_TOKEN" ] || { echo 'Configure DUCKDNS_DOMAIN e DUCKDNS_TOKEN no .env' >&2; exit 1; }
+        while :; do
+          r=$$(curl -fsS -m 20 "https://www.duckdns.org/update?domains=$$DUCKDNS_DOMAIN&token=$$DUCKDNS_TOKEN") || r=erro
+          echo "$$(date -u +%FT%TZ) duckdns: $$r"
+          sleep 300
+        done
+    environment:
+      DUCKDNS_DOMAIN: ${DUCKDNS_DOMAIN:-}
+      DUCKDNS_TOKEN: ${DUCKDNS_TOKEN:-}
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
 configs:
   livekit:
     content: |

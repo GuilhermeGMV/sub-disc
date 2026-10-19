@@ -2,7 +2,7 @@
 
 Comunicação privada para pequenos grupos: chat persistente, salas de voz permanentes, webcam e tela ao vivo. Interface em português brasileiro, dark-first, sem contas externas, telemetria obrigatória ou serviços de nuvem. Código original sob licença MIT.
 
-**Estado: MVP implementado e validado nativamente; entrega parcialmente concluída nos critérios de implantação.** Dois navegadores passaram pelo fluxo real de chat e WebRTC com LiveKit local. O Docker Desktop está inativo e o Docker Engine padrão nega acesso ao socket; sudo exige senha. O Compose foi validado como configuração, mas ainda precisa ser executado. Internet, TURN/TLS, dispositivos físicos e ARM64 também precisam da validação descrita em [docs/testing.md](docs/testing.md).
+**Estado: MVP implementado, validado nativamente e em execução local via Docker Compose.** Dois navegadores passaram pelo fluxo real de chat e WebRTC com LiveKit nativo. No Compose, app, LiveKit e Caddy estão saudáveis; a página, a API e a sinalização responderam HTTP 200. O E2E de mídia pelo Docker, internet, TURN/TLS, dispositivos físicos e ARM64 ainda precisam da validação descrita em [docs/testing.md](docs/testing.md).
 
 ## Executar com Docker
 
@@ -117,4 +117,4 @@ O E2E cria banco temporário, inicia backend e LiveKit reais em portas locais e 
 
 Backup com breve interrupção do backend: `./scripts/backup.sh`. Atualização, restauração e medição de consumo: [docs/deployment.md](docs/deployment.md).
 
-Próximas melhorias: executar a matriz de redes/dispositivos, validar Compose em x86_64/ARM64, adicionar recuperação administrativa de senha e moderação básica, ampliar testes de acessibilidade e extrair todos os textos restantes para os catálogos de idioma.
+Próximas melhorias: executar a matriz de redes/dispositivos, validar mídia via Compose e a execução ARM64, adicionar recuperação administrativa de senha e moderação básica, ampliar testes de acessibilidade e extrair todos os textos restantes para os catálogos de idioma.
