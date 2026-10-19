@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@lucide/svelte": "^1.59.0",
+    "@sapphi-red/web-noise-suppressor": "0.4.1",
     "livekit-client": "2.23.0",
     "svelte": "5.57.2"
   },

@@ -84,6 +84,17 @@ label input,
 label select {
   margin-top: 9px;
 }
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+label.check input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
 small,
 .muted {
   color: var(--muted);

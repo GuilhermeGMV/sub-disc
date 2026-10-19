@@ -8,7 +8,7 @@
     Maximize2,
     Minimize2,
   } from '@lucide/svelte';
-  import { media, participantVolume } from '../stores/media';
+  import { media, participantVolume, savedVolume } from '../stores/media';
   import MediaTrack from './MediaTrack.svelte';
   let expanded = '';
   $: participants = ($media.revision, $media.participants);
@@ -140,11 +140,27 @@
                 min="0"
                 max="1.5"
                 step="0.05"
-                value="1"
+                value={savedVolume(p.identity)}
                 oninput={(e) =>
                   participantVolume(p.identity, +e.currentTarget.value)}
               /></label
-            >{/if}
+            >{#if p.getTrackPublication(Track.Source.ScreenShareAudio)}<label
+                class="volume"
+                ><Monitor size={14} /><input
+                  aria-label={`Volume da tela de ${p.name}`}
+                  type="range"
+                  min="0"
+                  max="1.5"
+                  step="0.05"
+                  value={savedVolume(p.identity, 'screen')}
+                  oninput={(e) =>
+                    participantVolume(
+                      p.identity,
+                      +e.currentTarget.value,
+                      'screen',
+                    )}
+                /></label
+              >{/if}{/if}
         </div>
       {/each}
     </div>

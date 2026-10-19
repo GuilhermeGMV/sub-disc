@@ -12,6 +12,8 @@
     Video,
     VideoOff,
     Monitor,
+    MonitorSpeaker,
+    MonitorOff,
     PhoneOff,
     Settings,
     LogOut,
@@ -46,6 +48,7 @@
     toggleMic,
     toggleCamera,
     toggleScreen,
+    toggleScreenAudio,
     toggleDeafen,
     setPresenceSender,
     mediaError,
@@ -667,7 +670,18 @@
             aria-pressed={$media.screen}
             onclick={() => toggleScreen(quality).catch(mediaError)}
             ><Monitor size={20} /></button
-          ><button
+          >{#if $media.screenAudio !== 'none'}<button
+              class:enabled={$media.screenAudio === 'on'}
+              aria-label={$media.screenAudio === 'on'
+                ? 'Parar de enviar o som da tela'
+                : 'Enviar o som da tela'}
+              aria-pressed={$media.screenAudio === 'on'}
+              title="Som da tela"
+              onclick={() => toggleScreenAudio().catch(mediaError)}
+              >{#if $media.screenAudio === 'on'}<MonitorSpeaker
+                  size={20}
+                />{:else}<MonitorOff size={20} />{/if}</button
+            >{/if}<button
             aria-label={t.settings}
             disabled={!$media.room}
             onclick={() => (showDevices = true)}><Settings size={19} /></button
