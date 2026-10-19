@@ -99,9 +99,42 @@
             <div class="video-label">
               {#if v.track.source === Track.Source.ScreenShare}<Monitor
                   size={14}
-                />{/if}{v.p.name} · {v.track.source === Track.Source.ScreenShare
-                ? 'Tela'
-                : 'Câmera'}<button
+                />{/if}<span class="video-caption"
+                >{v.p.name} · {v.track.source === Track.Source.ScreenShare
+                  ? 'Tela'
+                  : 'Câmera'}</span
+              >
+              {#if v.track.source === Track.Source.ScreenShare && !v.p.isLocal}
+                {#if v.p.getTrackPublication(Track.Source.ScreenShareAudio)?.track}
+                  <label
+                    class="screen-volume"
+                    title={`Volume da tela de ${v.p.name}`}
+                  >
+                    <Volume2 size={15} />
+                    <input
+                      type="range"
+                      min="0"
+                      max="1.5"
+                      step="0.05"
+                      aria-label={`Volume do som da tela de ${v.p.name}`}
+                      value={savedVolume(v.p.identity, 'screen')}
+                      oninput={(e) =>
+                        participantVolume(
+                          v.p.identity,
+                          +e.currentTarget.value,
+                          'screen',
+                        )}
+                    />
+                  </label>
+                {:else}
+                  <span
+                    class="screen-no-audio"
+                    title="Este compartilhamento não está enviando áudio"
+                    >Sem áudio</span
+                  >
+                {/if}
+              {/if}
+              <button
                 aria-label={expanded ? 'Reduzir vídeo' : 'Ampliar vídeo'}
                 onclick={(e) =>
                   expanded
@@ -134,7 +167,7 @@
               chamada{/if}</span
           >
           {#if !p.isLocal}<label class="volume"
-              ><Volume2 size={14} /><input
+              ><Volume2 size={14} /><span>Voz</span><input
                 aria-label={`Volume de ${p.name}`}
                 type="range"
                 min="0"
@@ -146,7 +179,7 @@
               /></label
             >{#if p.getTrackPublication(Track.Source.ScreenShareAudio)}<label
                 class="volume"
-                ><Monitor size={14} /><input
+                ><Monitor size={14} /><span>Tela</span><input
                   aria-label={`Volume da tela de ${p.name}`}
                   type="range"
                   min="0"

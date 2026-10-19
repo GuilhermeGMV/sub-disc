@@ -174,6 +174,26 @@ test('dois amigos: cadastro, chat, WebSocket, áudio, câmera, tela e controles'
   await expect(
     friend.locator('[data-source="screen_share"] video'),
   ).toBeVisible();
+  // O áudio da tela pode não existir em um navegador de testes: diferencie
+  // captura sem som de volume ajustável, sem afetar o microfone.
+  const screenVolume = friend.getByRole('slider', {
+    name: 'Volume do som da tela de admin',
+  });
+  if (await screenVolume.count()) {
+    const voiceVolume = friend.getByRole('slider', { name: 'Volume de admin' });
+    const before = await voiceVolume.inputValue();
+    await screenVolume.evaluate((input: HTMLInputElement) => {
+      input.value = '0.25';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(screenVolume).toHaveValue('0.25');
+    await expect(voiceVolume).toHaveValue(before);
+    await expect(
+      friend.getByRole('slider', { name: 'Volume da tela de admin' }),
+    ).toHaveValue('0.25');
+  } else {
+    await expect(friend.getByText('Sem áudio', { exact: true })).toBeVisible();
+  }
   await page
     .getByRole('button', { name: 'Parar compartilhamento', exact: true })
     .click();

@@ -437,7 +437,11 @@ export function participantVolume(
   volume: number,
   source: VolumeSource = 'mic',
 ) {
-  volumes.set(volumeKey(identity, source), volume);
+  // Sincronize o controle na tela e no cartão do participante.
+  volumes.set(
+    volumeKey(identity, source),
+    Number.isFinite(volume) ? Math.max(0, Math.min(1.5, volume)) : 1,
+  );
   try {
     localStorage.setItem(
       VOLUMES_KEY,
@@ -449,6 +453,7 @@ export function participantVolume(
   const s = get(media);
   const p = s.room?.remoteParticipants.get(identity);
   if (p) applyVolumes(p, s.deafened);
+  media.update((current) => ({ ...current, revision: current.revision + 1 }));
 }
 export function toggleDeafen() {
   media.update((s) => {

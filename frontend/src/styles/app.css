@@ -713,11 +713,15 @@ kbd {
   display: flex;
   gap: 8px;
   align-items: center;
+  width: 100%;
   margin: 14px 0 0;
-  max-width: 120px;
+  max-width: 180px;
   color: #68868c;
+  font-size: 10px;
 }
 .volume input {
+  flex: 1;
+  min-width: 0;
   padding: 0;
   margin: 0;
   accent-color: var(--accent);
@@ -747,8 +751,39 @@ kbd {
   padding: 9px 12px;
   background: linear-gradient(transparent, #000c);
 }
+.video-caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .video-label button {
   margin-left: auto;
+  flex-shrink: 0;
+}
+.screen-volume {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 160px;
+  min-width: 75px;
+  color: #dbece4;
+}
+.screen-volume input {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+.screen-no-audio {
+  margin-left: auto;
+  color: #c4d0ca;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.video-label .screen-volume + button,
+.video-label .screen-no-audio + button {
+  margin-left: 0;
 }
 .media-track video {
   display: block;
