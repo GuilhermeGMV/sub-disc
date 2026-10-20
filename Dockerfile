@@ -19,6 +19,6 @@ COPY --from=rust /build/target/release/subdisc /usr/local/bin/subdisc
 COPY --from=web /web/dist /app/public
 ENV STATIC_DIR=/app/public DATABASE_URL=sqlite:///data/subdisc.db BIND=0.0.0.0:3000
 USER subdisc
-EXPOSE 3000
+EXPOSE 3000 50000-51999/udp
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD curl -fsS http://127.0.0.1:3000/api/health || exit 1
 ENTRYPOINT ["subdisc"]

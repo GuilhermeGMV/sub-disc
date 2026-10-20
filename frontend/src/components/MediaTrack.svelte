@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Track, type Participant } from 'livekit-client';
+  import { Track, type Participant } from '../lib/rtc';
   import { applyVolume } from '../stores/media';
   export let track: Track;
   export let participant: Participant;

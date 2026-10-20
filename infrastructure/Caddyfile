@@ -1,11 +1,4 @@
 {$APP_ADDRESS} {
-	encode zstd gzip
-	reverse_proxy app:3000 {
-		# Mesma CSP de backend/src/lib.rs; vale sem reiniciar o app.
-		header_down Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-	}
-	header Strict-Transport-Security "max-age=31536000"
-}
-{$MEDIA_ADDRESS} {
-	reverse_proxy livekit:7880
+    encode zstd gzip
+    reverse_proxy app:3000
 }

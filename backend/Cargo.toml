@@ -18,7 +18,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tower-http = { version = "0.6", features = ["fs", "trace", "set-header"] }
-livekit-api = { version = "0.9", features = ["rustls-tls-webpki-roots"] }
+webrtc = "=0.14.0"
 futures-util = "0.3"
 anyhow = "1"
 

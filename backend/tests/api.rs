@@ -22,10 +22,10 @@ impl TestApp {
             bind: "127.0.0.1:0".into(),
             secure: false,
             setup_key: "a-safe-setup-test-key".into(),
-            livekit_url: "ws://localhost:7880".into(),
-            livekit_internal: "http://127.0.0.1:1".into(),
-            livekit_key: "testkey".into(),
-            livekit_secret: "test-secret-at-least-thirty-two-characters".into(),
+            media_ice_servers: json!([]),
+            media_public_ip: String::new(),
+            media_udp_min: 50000,
+            media_udp_max: 51999,
             static_dir: "../frontend/dist".into(),
         };
         let state = AppState::new(db::connect(&config.database_url).await.unwrap(), config);
@@ -378,8 +378,7 @@ async fn csrf_expired_sessions_and_secure_cookie() {
     assert!(c.contains("; Secure"));
 }
 #[tokio::test]
-async fn media_grants_are_scoped_and_webhooks_verified() {
-    use livekit_api::access_token::TokenVerifier;
+async fn media_leases_are_scoped_exclusive_and_revoked() {
     let t = TestApp::new().await;
     assert_eq!(
         t.call("POST", "/api/channels/any/join", json!({}), "")
@@ -387,40 +386,29 @@ async fn media_grants_are_scoped_and_webhooks_verified() {
             .0,
         401
     );
-    let jwt = subdisc::media::mint(&t.state, "opaque-room", "opaque-user", "name").unwrap();
-    let claims =
-        TokenVerifier::with_api_key(&t.state.config.livekit_key, &t.state.config.livekit_secret)
-            .verify(&jwt)
-            .unwrap();
-    assert_eq!(claims.sub, "opaque-user");
-    assert_eq!(claims.video.room, "opaque-room");
-    assert!(claims.video.room_join);
-    assert!(!claims.video.room_admin && !claims.video.room_create && !claims.video.room_list);
-    assert!(!claims.video.can_publish_data());
-    assert!(claims.exp - claims.nbf <= 60);
-    assert_eq!(
-        t.call(
-            "POST",
-            "/api/livekit/webhook",
-            json!({"event":"participant_joined"}),
-            ""
-        )
-        .await
-        .0,
-        401
-    );
     let admin = t.admin().await;
-    let (_, c, _) = t.call("GET", "/api/channels", json!({}), &admin).await;
-    let text = c
+    let member = t.member(&admin).await;
+    let (_, channels, _) = t.call("GET", "/api/channels", json!({}), &admin).await;
+    let text = channels
         .as_array()
         .unwrap()
         .iter()
         .find(|c| c["kind"] == "text")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    let room = channels
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "voice")
+        .unwrap()["id"]
+        .as_str()
         .unwrap();
     assert_eq!(
         t.call(
             "POST",
-            &format!("/api/channels/{}/join", text["id"].as_str().unwrap()),
+            &format!("/api/channels/{text}/join"),
             json!({}),
             &admin
         )
@@ -428,6 +416,78 @@ async fn media_grants_are_scoped_and_webhooks_verified() {
         .0,
         400
     );
+    let (status, access, _) = t
+        .call(
+            "POST",
+            &format!("/api/channels/{room}/join"),
+            json!({}),
+            &admin,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(access["token"].as_str().unwrap().len(), 64);
+    assert_eq!(access["url"], "/api/media/ws");
+    assert_eq!(
+        t.call(
+            "POST",
+            &format!("/api/channels/{room}/join"),
+            json!({}),
+            &admin
+        )
+        .await
+        .0,
+        409
+    );
+    // An account cannot use someone else's lease, nor publish before authenticating signaling.
+    for cookie in [&member, &admin] {
+        assert_eq!(
+            t.call(
+                "POST",
+                "/api/media/publish",
+                json!({"lease":access["lease"],"source":"microphone","sdp":"invalid"}),
+                cookie
+            )
+            .await
+            .0,
+            403
+        );
+    }
+    assert_eq!(
+        t.call(
+            "POST",
+            "/api/media/leave",
+            json!({"lease":access["lease"]}),
+            &member
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(t.state.voice.lock().await.len(), 1);
+    t.call("POST", "/api/media/leave", json!({"lease":"stale"}), &admin)
+        .await;
+    assert_eq!(t.state.voice.lock().await.len(), 1);
+    t.call(
+        "POST",
+        "/api/media/leave",
+        json!({"lease":access["lease"]}),
+        &admin,
+    )
+    .await;
+    assert!(t.state.voice.lock().await.is_empty());
+    assert_eq!(
+        t.call(
+            "POST",
+            &format!("/api/channels/{room}/join"),
+            json!({}),
+            &admin
+        )
+        .await
+        .0,
+        200
+    );
+    t.call("POST", "/api/logout", json!({}), &admin).await;
+    assert!(t.state.voice.lock().await.is_empty());
 }
 #[tokio::test]
 async fn websocket_auth_events_and_logout_revocation() {
@@ -499,5 +559,169 @@ async fn websocket_auth_events_and_logout_revocation() {
     })
     .await
     .unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn media_signal_authentication_reconnect_and_logout() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::{
+        connect_async,
+        tungstenite::{Message, client::IntoClientRequest},
+    };
+    let t = TestApp::new().await;
+    let admin = t.admin().await;
+    let member = t.member(&admin).await;
+    let (_, channels, _) = t.call("GET", "/api/channels", json!({}), &admin).await;
+    let room = channels
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "voice")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    let (_, access, _) = t
+        .call(
+            "POST",
+            &format!("/api/channels/{room}/join"),
+            json!({}),
+            &admin,
+        )
+        .await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(
+        axum::serve(
+            listener,
+            t.app
+                .clone()
+                .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .into_future(),
+    );
+    let request = |cookie: &str, origin: &str| {
+        let mut req = format!("ws://{addr}/api/media/ws")
+            .into_client_request()
+            .unwrap();
+        req.headers_mut().insert("origin", origin.parse().unwrap());
+        req.headers_mut().insert("cookie", cookie.parse().unwrap());
+        req
+    };
+    assert!(
+        connect_async(request(&admin, "https://evil.example"))
+            .await
+            .is_err()
+    );
+    for (cookie, token) in [
+        (&member, access["token"].as_str().unwrap()),
+        (&admin, "wrong-token"),
+    ] {
+        let (mut ws, _) = connect_async(request(cookie, "http://localhost"))
+            .await
+            .unwrap();
+        ws.send(Message::text(
+            json!({"type":"hello","lease":access["lease"],"token":token}).to_string(),
+        ))
+        .await
+        .unwrap();
+        let event = tokio::time::timeout(std::time::Duration::from_secs(3), ws.next())
+            .await
+            .unwrap();
+        assert!(!matches!(event, Some(Ok(Message::Text(_)))));
+    }
+    let hello = json!({"type":"hello","lease":access["lease"],"token":access["token"]}).to_string();
+    let (mut ws, _) = connect_async(request(&admin, "http://localhost"))
+        .await
+        .unwrap();
+    ws.send(Message::text(hello.clone())).await.unwrap();
+    assert!(
+        ws.next()
+            .await
+            .unwrap()
+            .unwrap()
+            .to_text()
+            .unwrap()
+            .contains("snapshot")
+    );
+    // Unknown sources and malformed SDP cannot leave an active publication.
+    assert_eq!(
+        t.call(
+            "POST",
+            "/api/media/publish",
+            json!({"lease":access["lease"],"source":"data","sdp":"invalid"}),
+            &admin
+        )
+        .await
+        .0,
+        422
+    );
+    assert_eq!(
+        t.call(
+            "POST",
+            "/api/media/publish",
+            json!({"lease":access["lease"],"source":"microphone","sdp":"invalid"}),
+            &admin
+        )
+        .await
+        .0,
+        400
+    );
+    assert!(t.state.media.publications(room).await.is_empty());
+    assert_eq!(
+        t.call(
+            "POST",
+            "/api/media/publish",
+            json!({"lease":access["lease"],"source":"microphone","sdp":"invalid"}),
+            &member
+        )
+        .await
+        .0,
+        403
+    );
+    let (mut replacement, _) = connect_async(request(&admin, "http://localhost"))
+        .await
+        .unwrap();
+    replacement.send(Message::text(hello)).await.unwrap();
+    assert!(
+        replacement
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .to_text()
+            .unwrap()
+            .contains("snapshot")
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while let Some(event) = ws.next().await {
+            if matches!(event, Ok(Message::Close(_)) | Err(_)) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        t.state
+            .voice
+            .lock()
+            .await
+            .values()
+            .next()
+            .unwrap()
+            .connected
+    );
+    t.call("POST", "/api/logout", json!({}), &admin).await;
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while let Some(event) = replacement.next().await {
+            if matches!(event, Ok(Message::Close(_)) | Err(_)) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(t.state.voice.lock().await.is_empty());
     server.abort();
 }

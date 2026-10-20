@@ -10,7 +10,7 @@ import {
   ScreenSharePresets,
   AudioPresets,
   type LocalAudioTrack,
-} from 'livekit-client';
+} from '../lib/rtc';
 import { post } from '../lib/api';
 import { RNNOISE, RnnoiseProcessor } from '../lib/rnnoise';
 export interface MediaState {
@@ -48,7 +48,7 @@ let generation = 0;
 let videoLevel = 'balanced';
 let releaseLock: (() => void) | undefined;
 const VOLUMES_KEY = 'subdisc:volumes';
-// Identidade LiveKit é `usuario:lease`; o volume fica salvo por usuário.
+// Identidade de mídia é `usuario:lease`; o volume fica salvo por usuário.
 const userOf = (identity: string) => identity.split(':')[0];
 const volumes = loadVolumes();
 function loadVolumes() {
@@ -105,7 +105,7 @@ const captureOptions = (a: AudioSettings) => ({
 const micTrack = (room: Room) =>
   room.localParticipant.getTrackPublication(Track.Source.Microphone)
     ?.audioTrack as LocalAudioTrack | undefined;
-// Sem deviceId o LiveKit reabre o microfone ignorando as demais restrições.
+// Sem deviceId a captura reabre o microfone ignorando as demais restrições.
 async function restartMic(track: LocalAudioTrack, a: AudioSettings) {
   const deviceId = (await track.getDeviceId(false)) ?? 'default';
   await track.restartTrack({ ...captureOptions(a), deviceId });
@@ -249,22 +249,22 @@ export async function joinVoice(channelId: string) {
       if (!acquired)
         throw new Error('Você já está em uma chamada em outra aba.');
     }
-    const access = await post<{ url: string; token: string; lease: string }>(
-      `/channels/${channelId}/join`,
-    );
+    const access = await post<{
+      url: string;
+      token: string;
+      lease: string;
+      iceServers: RTCIceServer[];
+    }>(`/channels/${channelId}/join`);
     if (attempt !== generation) {
       await post('/media/leave', { lease: access.lease });
       return;
     }
     const room = new Room({
-      adaptiveStream: true,
-      dynacast: true,
       audioCaptureDefaults: captureOptions(get(audioSettings)),
       videoCaptureDefaults: { resolution: VideoPresets.h720.resolution },
       publishDefaults: {
         audioPreset: AudioPresets.musicHighQuality,
         videoCodec: 'vp8',
-        simulcast: true,
         videoEncoding: VideoPresets.h720.encoding,
         screenShareEncoding: ScreenSharePresets.h1080fps15.encoding,
       },
@@ -317,7 +317,7 @@ export async function joinVoice(channelId: string) {
           void post('/media/leave', { lease: s.lease }).catch(mediaError);
       }
     });
-    await room.connect(access.url, access.token);
+    await room.connect(access.url, access.token, access);
     if (attempt !== generation) {
       await room.disconnect();
       return;
@@ -487,5 +487,12 @@ export async function quality(level: string) {
   const track = room.localParticipant.getTrackPublication(
     Track.Source.Camera,
   )?.videoTrack;
-  if (track) await track.restartTrack({ resolution: preset.resolution });
+  if (track) {
+    await track.restartTrack({ resolution: preset.resolution });
+    await track.setEncoding(preset.encoding);
+  }
+  room.options.publishDefaults = {
+    ...room.options.publishDefaults,
+    videoEncoding: preset.encoding,
+  };
 }

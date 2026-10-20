@@ -6,10 +6,10 @@ pub struct Config {
     pub bind: String,
     pub secure: bool,
     pub setup_key: String,
-    pub livekit_url: String,
-    pub livekit_internal: String,
-    pub livekit_key: String,
-    pub livekit_secret: String,
+    pub media_ice_servers: serde_json::Value,
+    pub media_public_ip: String,
+    pub media_udp_min: u16,
+    pub media_udp_max: u16,
     pub static_dir: String,
 }
 impl Config {
@@ -22,10 +22,10 @@ impl Config {
             bind: get("BIND", "0.0.0.0:3000"),
             secure,
             setup_key: get("SETUP_KEY", ""),
-            livekit_url: get("LIVEKIT_URL", "ws://localhost:7880"),
-            livekit_internal: get("LIVEKIT_INTERNAL_URL", "http://127.0.0.1:7880"),
-            livekit_key: get("LIVEKIT_API_KEY", "devkey"),
-            livekit_secret: get("LIVEKIT_API_SECRET", "secret"),
+            media_ice_servers: serde_json::from_str(&get("MEDIA_ICE_SERVERS", "[]"))?,
+            media_public_ip: get("MEDIA_PUBLIC_IP", ""),
+            media_udp_min: get("MEDIA_UDP_MIN", "50000").parse()?,
+            media_udp_max: get("MEDIA_UDP_MAX", "51999").parse()?,
             static_dir: get("STATIC_DIR", "frontend/dist"),
         };
         anyhow::ensure!(
@@ -36,15 +36,22 @@ impl Config {
             !c.origin.ends_with('/'),
             "APP_ORIGIN não deve terminar com barra"
         );
+        anyhow::ensure!(
+            c.media_udp_min > 0 && c.media_udp_max >= c.media_udp_min,
+            "Faixa UDP inválida"
+        );
+        let _: Vec<webrtc::ice_transport::ice_server::RTCIceServer> =
+            serde_json::from_value(c.media_ice_servers.clone())?;
+        if !c.media_public_ip.is_empty() {
+            let _: std::net::IpAddr = c.media_public_ip.parse()?;
+        }
         if secure {
             anyhow::ensure!(
-                c.origin.starts_with("https://") && c.livekit_url.starts_with("wss://"),
+                c.origin.starts_with("https://"),
                 "Produção exige HTTPS e WSS"
             );
             anyhow::ensure!(
-                c.livekit_secret.len() >= 32
-                    && c.livekit_key != "devkey"
-                    && !c.setup_key.starts_with("development"),
+                !c.setup_key.starts_with("development"),
                 "Configure segredos próprios de produção"
             );
         }

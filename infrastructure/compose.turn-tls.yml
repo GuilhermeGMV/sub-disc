@@ -1,35 +1,22 @@
-# Aplicar junto de docker-compose.yml; caminhos relativos à raiz do projeto.
+# Use with compose.turn.yml. Certificates must already exist and be renewed externally.
 services:
-  livekit:
-    environment:
-      LIVEKIT_TURN_CERT: /certs/fullchain.pem
-      LIVEKIT_TURN_KEY: /certs/privkey.pem
-    volumes:
-      - ./infrastructure/certs:/certs:ro
+  turn:
     ports:
       - '5349:5349/tcp'
-configs:
-  livekit:
-    content: |
-      port: 7880
-      bind_addresses: [0.0.0.0]
-      rtc:
-        tcp_port: 7881
-        udp_port: 7882
-        node_ip: ${LIVEKIT_NODE_IP:?Configure LIVEKIT_NODE_IP}
-        use_external_ip: false
-        enable_loopback_candidate: false
-      webhook:
-        api_key: ${LIVEKIT_API_KEY}
-        urls: [http://app:3000/api/livekit/webhook]
-      turn:
-        enabled: true
-        domain: ${TURN_DOMAIN:?Configure TURN_DOMAIN}
-        tls_port: 5349
-        udp_port: 3478
-      room:
-        max_participants: 20
-        empty_timeout: 300
-      logging:
-        level: info
-        json: true
+    volumes:
+      - ./infrastructure/certs:/certs:ro
+    command:
+      - --log-file=stdout
+      - --fingerprint
+      - --lt-cred-mech
+      - --realm=${TURN_DOMAIN:?Configure TURN_DOMAIN}
+      - --user=${TURN_USER:?Configure TURN_USER}:${TURN_PASSWORD:?Configure TURN_PASSWORD}
+      - --external-ip=${MEDIA_PUBLIC_IP:?Configure MEDIA_PUBLIC_IP}
+      - --min-port=52000
+      - --max-port=52199
+      - --listening-port=3478
+      - --tls-listening-port=5349
+      - --cert=/certs/fullchain.pem
+      - --pkey=/certs/privkey.pem
+      - --no-cli
+      - --no-multicast-peers

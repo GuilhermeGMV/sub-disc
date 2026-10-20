@@ -13,12 +13,27 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&config.bind).await?;
     tracing::info!(address=%config.bind,"Subdisc iniciado");
     let state = AppState::new(pool, config);
+    let shutdown_state = state.clone();
+    let maintenance_state = state.clone();
+    let maintenance = tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            tick.tick().await;
+            subdisc::media::maintain(&maintenance_state).await;
+        }
+    });
     axum::serve(
         listener,
         app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown())
+    .with_graceful_shutdown(async move {
+        shutdown().await;
+        shutdown_state.emit(subdisc::websocket::Event::Shutdown);
+        shutdown_state.voice.lock().await.clear();
+        shutdown_state.media.shutdown().await;
+    })
     .await?;
+    maintenance.abort();
     Ok(())
 }
 

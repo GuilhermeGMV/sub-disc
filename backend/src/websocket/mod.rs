@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    #[serde(skip)]
+    Shutdown,
     Message {
         message: ChatMessage,
     },
@@ -107,6 +109,7 @@ async fn run(s: AppState, session: Session, socket: WebSocket) {
          }},
          event=rx.recv()=>{
           let msg=match event{
+           Ok(Event::Shutdown)=>break,
            Ok(Event::SessionRevoked{session_hash})=>{if session_hash==session.hash{break}else{continue}},
            Ok(Event::PresenceChanged)=>serde_json::json!({"v":1,"type":"presence","online":s.online.lock().await.keys().cloned().collect::<Vec<_>>(),"voice":s.voice.lock().await.values().filter(|l|l.connected).cloned().collect::<Vec<_>>()}),
            Ok(e)=>{let mut v=serde_json::to_value(e).unwrap_or_default();v["v"]=1.into();v},

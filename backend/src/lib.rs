@@ -32,6 +32,7 @@ pub struct Inner {
     pub events: broadcast::Sender<websocket::Event>,
     pub online: Mutex<HashMap<String, usize>>,
     pub voice: Mutex<HashMap<String, media::Lease>>,
+    pub media: media::Hub,
     pub rates: Mutex<HashMap<String, (Instant, u32)>>,
     pub auth_slots: Arc<tokio::sync::Semaphore>,
 }
@@ -50,6 +51,7 @@ impl AppState {
             events,
             online: Mutex::new(HashMap::new()),
             voice: Mutex::new(HashMap::new()),
+            media: media::Hub::new(),
             rates: Mutex::new(HashMap::new()),
             auth_slots: Arc::new(tokio::sync::Semaphore::new(4)),
         }))
@@ -112,23 +114,26 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/api/channels/{id}/join", post(media::join))
         .route("/api/media/leave", post(media::leave))
-        .route("/api/livekit/webhook", post(media::webhook))
+        .route("/api/media/ws", get(media::upgrade))
+        .route("/api/media/publish", post(media::publish))
+        .route("/api/media/subscribe", post(media::subscribe))
+        .route("/api/media/close", post(media::close))
+        .route("/api/media/control", post(media::control))
         .route("/api/ws", get(websocket::upgrade))
         .route("/api/{*path}", get(|| async { error::AppError::missing() }))
         .fallback_service(
             ServeDir::new(&static_dir)
                 .not_found_service(ServeFile::new(format!("{static_dir}/index.html"))),
         )
-        .layer(DefaultBodyLimit::max(32 * 1024))
+        .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), security))
         .with_state(state)
 }
 async fn security(State(s): State<AppState>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
-    let requires_origin = (req.method() != Method::GET
-        && req.method() != Method::HEAD
-        && path != "/api/livekit/webhook")
-        || path == "/api/ws";
+    let requires_origin = (req.method() != Method::GET && req.method() != Method::HEAD)
+        || path == "/api/ws"
+        || path == "/api/media/ws";
     if requires_origin
         && req.headers().get("origin").and_then(|h| h.to_str().ok())
             != Some(s.config.origin.as_str())

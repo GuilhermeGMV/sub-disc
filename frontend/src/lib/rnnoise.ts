@@ -1,8 +1,4 @@
-import type {
-  AudioProcessorOptions,
-  Track,
-  TrackProcessor,
-} from 'livekit-client';
+import type { AudioProcessorOptions, Track, TrackProcessor } from './rtc';
 import {
   RnnoiseWorkletNode,
   loadRnnoise,

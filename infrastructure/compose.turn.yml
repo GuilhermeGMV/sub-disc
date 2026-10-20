@@ -1,0 +1,20 @@
+services:
+  turn:
+    image: coturn/coturn:4.6.3
+    restart: unless-stopped
+    command:
+      - --log-file=stdout
+      - --fingerprint
+      - --lt-cred-mech
+      - --realm=${TURN_DOMAIN:?Configure TURN_DOMAIN}
+      - --user=${TURN_USER:?Configure TURN_USER}:${TURN_PASSWORD:?Configure TURN_PASSWORD}
+      - --external-ip=${MEDIA_PUBLIC_IP:?Configure MEDIA_PUBLIC_IP}
+      - --min-port=52000
+      - --max-port=52199
+      - --listening-port=3478
+      - --no-cli
+      - --no-multicast-peers
+    ports:
+      - '3478:3478/udp'
+      - '3478:3478/tcp'
+      - '52000-52199:52000-52199/udp'

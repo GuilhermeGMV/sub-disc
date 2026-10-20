@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Track } from 'livekit-client';
+  import { Track } from '../lib/rtc';
   import {
     MicOff,
     Monitor,

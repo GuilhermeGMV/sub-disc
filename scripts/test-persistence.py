@@ -8,7 +8,7 @@ with tempfile.TemporaryDirectory(prefix='subdisc-persistence-') as tmp:
     origin=f'http://127.0.0.1:{port}'
     env={**os.environ,'APP_ENV':'development','APP_ORIGIN':origin,'BIND':f'127.0.0.1:{port}',
          'DATABASE_URL':f'sqlite://{tmp}/test.db','SETUP_KEY':'persistence-setup-test-key',
-         'LIVEKIT_API_KEY':'test','LIVEKIT_API_SECRET':'test-secret-at-least-thirty-two-characters'}
+         'MEDIA_ICE_SERVERS':'[]'}
     opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     def call(path,data=None):
         request=urllib.request.Request(origin+'/api'+path,data=None if data is None else json.dumps(data).encode(),headers={'Origin':origin,'Content-Type':'application/json'})

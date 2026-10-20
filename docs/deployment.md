@@ -1,150 +1,115 @@
-# Instalação Linux e operação
+# Implantação
 
-## Domínio e HTTPS
+## Serviço e build
 
-Use Linux x86_64 ou ARM64, Docker Engine e Compose recente. A imagem da aplicação compila Rust e Node para a arquitetura do host. Nenhum binário x86_64 baixado durante os testes é copiado para a imagem. ARM64 ainda requer validação real.
-
-Crie dois registros DNS A apontando para o IPv4 público do servidor:
-
-- `conversa.exemplo.com`: aplicação.
-- `rtc.exemplo.com`: sinalização LiveKit.
-
-Somente publique AAAA se o IPv6 e o firewall estiverem configurados. Serviços DNS com proxy HTTP precisam permitir WebSockets; prefira inicialmente DNS direto. Não é necessário conta de serviço de comunicação em nuvem.
-
-Em uma instalação nova, sem `.env`:
+O executável `subdisc` contém API, gerenciamento de sessões e SFU WebRTC. Não há
+processo de mídia separado obrigatório. `Dockerfile` compila o frontend e o
+backend a partir de lockfiles e executa como usuário sem privilégios. GStreamer
+é uma dependência do **cliente desktop**, não do servidor.
 
 ```bash
-python3 scripts/configure.py \
-  --domain conversa.exemplo.com \
-  --media-domain rtc.exemplo.com \
-  --public-ip 203.0.113.10
-# Substitua o IP de exemplo pelo endereço público real.
+python3 scripts/configure.py --domain conversa.exemplo.com --public-ip 203.0.113.10
+docker compose config --quiet
 docker compose up --build -d
-docker compose ps
-docker compose logs --tail=100 app livekit caddy
+docker compose logs --tail=100 app caddy
 ```
 
-O script gera segredos aleatórios, protege `.env` com modo 0600 e se recusa a sobrescrever um arquivo existente. Para converter uma instalação local, salve o `.env` anterior em local privado antes de executar. Não troque o volume do banco.
-
-O Caddy obtém e renova certificados ACME automaticamente para os dois nomes. O acesso externo exige DNS válido, portas 80/443 liberadas e servidor alcançável. Abra `https://conversa.exemplo.com`, consulte a `SETUP_KEY` no `.env` local e crie a primeira conta. Depois da primeira conta, a rota de instalação fica bloqueada por transação no banco.
-
-### DNS dinâmico gratuito (DuckDNS)
-
-Sem domínio próprio, crie uma conta em [duckdns.org](https://www.duckdns.org) e registre um subdomínio, por exemplo `meuchat`. O DuckDNS resolve também os nomes abaixo dele, então um único subdomínio atende aos dois endereços. No `.env`:
-
-```bash
-COMPOSE_PROFILES=duckdns
-DUCKDNS_DOMAIN=meuchat
-DUCKDNS_TOKEN=<token exibido no painel do DuckDNS>
-APP_ORIGIN=https://${DUCKDNS_DOMAIN}.duckdns.org
-APP_ADDRESS=${DUCKDNS_DOMAIN}.duckdns.org
-MEDIA_ADDRESS=rtc.${DUCKDNS_DOMAIN}.duckdns.org
-LIVEKIT_URL=wss://rtc.${DUCKDNS_DOMAIN}.duckdns.org
-```
-
-O serviço `duckdns` envia o IP público atual ao DuckDNS a cada 5 minutos (`docker compose logs duckdns` mostra `OK` ou `KO`). O nome não contém o IP, mas qualquer consulta DNS ainda o revela, assim como os candidatos ICE de uma chamada. Encaminhamento de portas continua obrigatório (veja Portas e NAT). Quando o IP mudar, atualize `LIVEKIT_NODE_IP` e rode `docker compose up -d`.
+O comando gera `.env` com permissão 0600 e uma chave de instalação aleatória;
+recusa sobrescrever um arquivo existente. Configure DNS A para o endereço real.
+No primeiro acesso, crie o administrador com `SETUP_KEY`. Não exponha a chave.
 
 ## Variáveis
 
-| Variável | Significado |
+| Variável | Função / padrão |
 |---|---|
-| `APP_ENV` | `development` somente em localhost; demais valores usam proteção de produção |
-| `APP_ORIGIN` | Origem exata do navegador, sem barra final; ex. `https://conversa.exemplo.com` |
-| `APP_ADDRESS` | Endereço do site Caddy; domínio sem esquema habilita HTTPS automático |
-| `MEDIA_ADDRESS` | Domínio Caddy da sinalização |
-| `SETUP_KEY` | Chave secreta para o primeiro administrador; mínimo 16 caracteres |
-| `LIVEKIT_URL` | URL pública WebSocket: `wss://rtc.exemplo.com` |
-| `LIVEKIT_API_KEY` | Identificador da chave, não é senha; padrão `subdisc` |
-| `LIVEKIT_API_SECRET` | Segredo compartilhado entre backend e SFU; produção exige pelo menos 32 caracteres |
-| `LIVEKIT_NODE_IP` | IPv4 realmente alcançável anunciado pelo SFU aos clientes |
-| `LIVEKIT_LOOPBACK` | `true` somente nos testes locais; `false` em produção |
-| `TURN_ENABLED` | Liga TURN/UDP integrado, padrão `false` |
-| `TURN_DOMAIN` | Nome DNS do TURN quando habilitado |
-| `DATABASE_URL` | Definida no Compose: `sqlite:///data/subdisc.db` |
-| `LIVEKIT_INTERNAL_URL` | Definida no Compose: `http://livekit:7880` |
-| `STATIC_DIR`, `BIND`, `RUST_LOG` | Caminho do build SPA, socket HTTP e nível de logs do Rust |
+| `APP_ENV` | `development` para HTTP local; produção exige origem HTTPS |
+| `APP_ORIGIN` | Origem exata, sem barra final; confere CSRF e upgrades |
+| `APP_ADDRESS` | Listener/domínio do Caddy; local: `http://:8080` |
+| `SETUP_KEY` | Segredo de instalação, mínimo 16 caracteres |
+| `BIND` | API/SFU HTTP: `0.0.0.0:3000` |
+| `DATABASE_URL` | SQLite; Compose usa `sqlite:///data/subdisc.db` |
+| `STATIC_DIR` | Bundle web; Compose usa `/app/public` |
+| `MEDIA_PUBLIC_IP` | IP público do host SFU em NAT 1:1; vazio para localhost/LAN |
+| `MEDIA_UDP_MIN`, `MEDIA_UDP_MAX` | Faixa de candidatos ICE: 50000–51999 |
+| `MEDIA_ICE_SERVERS` | Array JSON de servidores ICE; padrão `[]` |
+| `RUST_LOG` | Filtro de logs; exemplo `subdisc=info`. `subdisc=debug` registra ofertas, estados de transporte e camadas recebidas |
 
-Configuração do LiveKit no Compose é renderizada em `configs.livekit.content`. `infrastructure/livekit.yaml` é a referência para execução nativa local. O segredo chega ao LiveKit por `LIVEKIT_KEYS` e ao Rust por ambiente; nunca pelo bundle do frontend. `docker compose config` sem `--quiet` mostra variáveis resolvidas: não publique sua saída de produção.
+O Compose publica a faixa UDP fixa acima. Se alterar seus limites, altere também
+as publicações de portas e o firewall. Um domínio atende página, API e sinalização;
+não é mais necessário domínio/porta HTTP separados para mídia. O backend valida
+configuração JSON, IP e limites antes de iniciar.
 
-## Portas e NAT
+## Portas, TLS e NAT
 
-| Porta pública | Protocolo | Finalidade |
+| Porta | Protocolo | Destino |
 |---|---|---|
-| 80 | TCP | ACME e redirecionamento HTTPS |
-| 443 | TCP | Aplicação HTTPS e sinalização WSS pelo Caddy |
-| 443 | UDP | HTTP/3 opcional do Caddy |
-| 7881 | TCP | Transporte ICE/TCP alternativo |
-| 7882 | UDP | ICE/UDP mux, tráfego WebRTC principal |
-| 3478 | UDP | TURN/UDP integrado, somente se habilitado |
-| 5349 | TCP | TURN/TLS opcional no exemplo abaixo |
+| 80 | TCP | Caddy: redirecionamento/ACME |
+| 443 | TCP; UDP opcional para HTTP/3 | Caddy: HTTPS e WSS |
+| 8080 | TCP | Apenas a configuração HTTP local |
+| 50000–51999 | UDP | SFU Rust no contêiner app |
+| 3478 | UDP/TCP, opcional | coturn |
+| 5349 | TCP/TLS, opcional | coturn com certificados |
+| 52000–52199 | UDP, opcional | Relays coturn |
 
-As publicações 8080/7880 do Caddy são usadas pela configuração local. Em produção com domínios, o Caddy não abre esses listeners; ainda assim remova essas duas publicações se não precisar do modo local. As portas internas 3000 (Rust), 7880 (LiveKit) e 2019 (admin Caddy) não são publicadas diretamente.
+Encaminhe as portas de mídia para o mesmo host e configure `MEDIA_PUBLIC_IP`
+com o IP alcançável. Em rede local, deixar vazio preserva candidatos locais.
+Endereços IPv6 link-local (`fe80::/10`) não são anunciados como candidatos.
+Firewall/CGNAT ou redes que bloqueiam UDP precisam de TURN alcançável. Caddy é
+proxy HTTP; não encaminha SRTP nem TURN. Mídia permanece criptografada com
+DTLS/SRTP entre cada cliente e o SFU; o SFU tem acesso ao RTP para encaminhá-lo.
 
-Libere as portas no firewall do host, no firewall do provedor e no roteador. **UDP 7882 não passa pelo proxy HTTPS.** O projeto usa mux UDP; não exige abrir 50000–60000 ao mesmo tempo. Exemplo UFW: `sudo ufw allow 7882/udp`, `sudo ufw allow 7881/tcp`, além de HTTP/HTTPS. Regras Docker e UFW interagem: confirme de uma rede externa quais portas estão realmente acessíveis.
+A seleção de portas é por transporte. O limite de 20 usuários é um controle de
+admissão, não uma promessa de capacidade medida; planeje banda de saída em
+função do número de assinantes e fontes de vídeo simultâneas.
 
-Atrás de NAT com IP público, encaminhe as portas para o host Docker e defina `LIVEKIT_NODE_IP` como o IP público. Teste também a partir de outra rede; NAT hairpin pode se comportar diferente na LAN. IP dinâmico exige atualização de DNS e do IP anunciado, seguida de reinício do LiveKit.
+## STUN/TURN opcional
 
-**CGNAT sem encaminhamento impede conexões de entrada.** HTTPS sozinho e TURN instalado na mesma rede inacessível não corrigem isso. Use servidor com IP público alcançável ou uma rede privada/VPN que transporte UDP e seja acessível a todos. Túneis HTTP comuns não transportam a mídia WebRTC necessária. Não há promessa de conectividade universal.
+Configure servidores ICE reais e autenticados:
 
-A [tabela oficial de portas do LiveKit](https://docs.livekit.io/transport/self-hosting/ports-firewall/) detalha os transportes e a diferença entre sinalização e mídia.
-
-## TURN integrado
-
-Para TURN/UDP, configure `TURN_ENABLED=true`, `TURN_DOMAIN=turn.exemplo.com`, DNS para o servidor e abra 3478/UDP. O cliente recebe as credenciais ICE do próprio LiveKit; não configure senha TURN no frontend. STUN também é servido pelo listener TURN/UDP. Sem TURN, a configuração usa os candidatos diretos do IP público anunciado.
-
-Para TURN/TLS, obtenha um certificado público válido para `turn.exemplo.com` com seu cliente ACME, salve `fullchain.pem` e `privkey.pem` em `infrastructure/certs/` (fora do Git), proteja a chave e use:
-
-```bash
-docker compose -f docker-compose.yml -f infrastructure/compose.turn-tls.yml up -d
+```dotenv
+MEDIA_ICE_SERVERS='[{"urls":["stun:turn.exemplo.com:3478","turn:turn.exemplo.com:3478?transport=udp","turns:turn.exemplo.com:5349?transport=tcp"],"username":"subdisc","credential":"senha-aleatoria"}]'
+TURN_DOMAIN=turn.exemplo.com
+TURN_USER=subdisc
+TURN_PASSWORD=senha-aleatoria
 ```
 
-A sobreposição exige `TURN_DOMAIN`, habilita TLS no próprio LiveKit e publica 5349/TCP. O Caddy continua responsável somente por HTTPS/WSS; proxy HTTP comum não termina TURN. Renove os certificados com seu cliente ACME e reinicie o LiveKit para carregar os novos arquivos.
-
-Redes corporativas que liberam apenas 443 podem bloquear 5349. Para atendê-las, use TURN/TLS em 443 com IP público dedicado ou proxy **L4** apropriado. Ajuste o listener TLS e a porta anunciada para 443; faça o Caddy escutar somente no outro IP. Não mapeie simplesmente 443 para 5349 sem corrigir a porta anunciada. Veja a [implantação oficial LiveKit com TURN/TLS](https://docs.livekit.io/transport/self-hosting/vm/). Não foi necessário acrescentar coturn.
-
-## Persistência, backup e restauração
-
-`app_data` contém SQLite e seus arquivos WAL/SHM; `caddy_data` mantém certificados e contas ACME; `caddy_config` mantém estado do proxy. `restart: unless-stopped` reinicia os serviços quando Docker reinicia. Habilite o daemon no boot: `sudo systemctl enable --now docker` quando aplicável à distribuição.
-
-Para backup consistente e simples:
+O backend entrega a configuração somente após autenticar `join`. Credenciais TURN
+são entregues aos participantes para alocar relays; use credenciais dedicadas e
+rotacione-as. Elas não concedem acesso a salas ou à API. Sem TURN configurado,
+não existe fallback oculto. Para coturn opcional:
 
 ```bash
-./scripts/backup.sh ./backups
+docker compose -f docker-compose.yml -f infrastructure/compose.turn.yml up -d
 ```
 
-O script para brevemente o backend, copia **todo** `/data`, incluindo WAL se presente, e reinicia o backend mesmo em caso de erro. O arquivo contém contas, hashes e sessões; proteja e guarde uma cópia fora da máquina. Guarde `.env` separadamente de forma segura. Não copie somente `subdisc.db` enquanto a aplicação escreve: dados recentes podem estar no WAL.
+Para TLS, forneça certificados válidos em `infrastructure/certs/fullchain.pem` e
+`privkey.pem`, e acrescente `-f infrastructure/compose.turn-tls.yml`. Renove-os e
+reinicie coturn para recarregar. Redes que permitem somente 443 precisam de
+TURN/TLS em 443 num IP dedicado ou encaminhamento L4 apropriado; ajuste listener
+e URL ICE juntos. Essa configuração ainda precisa de teste em rede externa.
 
-Restauração (sobrescreve os dados existentes; faça backup antes):
+## Desenvolvimento nativo
 
 ```bash
-docker compose stop app
-docker compose run --rm --no-deps --user root \
-  -v "$PWD/backups:/backup:ro" --entrypoint sh app -c \
-  'rm -f /data/subdisc.db /data/subdisc.db-wal /data/subdisc.db-shm && tar -xzf /backup/SEU-ARQUIVO.tar.gz -C /data && chown -R 10001:10001 /data'
-docker compose start app
+cp .env.example .env
+npm --prefix frontend ci
+./scripts/dev.sh
 ```
 
-Use apenas um backup confiável produzido pelo script. Após restaurar, teste login e histórico. Canais vazios persistem no SQLite e não dependem do ciclo de vida das salas SFU.
+Vite atende 5173 e encaminha `/api`, inclusive WebSocket, para Rust/3000. Só Rust
+e Vite são iniciados. Para servir o bundle diretamente, compile o frontend,
+configure `STATIC_DIR`, `APP_ORIGIN`, `DATABASE_URL` e `SETUP_KEY`, e execute o
+binário Rust. Use HTTPS atrás do Caddy em produção.
 
-Atualização:
+## Atualizar, monitorar e fazer backup
 
-```bash
-./scripts/backup.sh
-# Atualize o código e revise as notas de versão/migrations.
-docker compose build --pull app
-docker compose pull livekit caddy
-docker compose up -d
-docker compose ps
-```
+Use `scripts/backup.sh` para o SQLite e preserve o volume `app_data`. Pare a
+aplicação para cópias manuais consistentes. Antes de atualizar, faça backup,
+compile/teste e reinicie os containers. Reiniciar o backend encerra chamadas;
+os clientes conservam contas e preferências e podem entrar novamente.
 
-Nunca execute `docker compose down -v` para atualizar: `-v` remove os volumes. Migrations são aplicadas na inicialização. Rollback de migração exige restaurar o backup compatível; não é automático.
-
-## Medir na máquina real
-
-- `docker stats --no-stream`: memória, CPU e rede em repouso e com 2, 5, 10 e 20 participantes.
-- `pidstat -r -u -p PID 1`: execução nativa; compare repouso, só áudio e compartilhamento.
-- `iftop`/`nload` na interface de rede: banda do SFU; registre direção e duração da amostra.
-- `chrome://webrtc-internals` ou `about:webrtc`: RTT, jitter, perda, bitrate e codec negociado. RTT não é latência de ponta a ponta de áudio.
-- Estatísticas WebRTC e logs do LiveKit: reconexões e candidate pair selecionado. Não cole tokens/cookies em relatórios.
-
-O teste local não é benchmark de produção. Não há números estimados de RAM, CPU ou capacidade garantida. O frontend gera um chunk separado para o SDK LiveKit; o build informa seu tamanho real.
+`GET /api/health` verifica acesso ao banco. Logs e estatísticas WebRTC ajudam a
+separar falhas de sinalização, ICE e codecs. Não publique cookies, grants ou
+SDP de ambientes reais. O perfil opcional `duckdns` permanece disponível;
+configure `DUCKDNS_DOMAIN` e `DUCKDNS_TOKEN`. Mudança de IP público exige também
+atualizar `MEDIA_PUBLIC_IP` e reiniciar o SFU, além da atualização do DNS.

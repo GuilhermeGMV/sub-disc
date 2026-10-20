@@ -1,6 +1,8 @@
+//! Leases, authenticated signaling and the in-process RTP forwarding service.
+mod sfu;
 use crate::{
     AppState,
-    auth::Session,
+    auth::{self, Session},
     channels,
     error::{AppError, Result},
     now,
@@ -8,25 +10,25 @@ use crate::{
 };
 use axum::{
     Json,
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode},
-};
-use livekit_api::{
-    access_token::{AccessToken, TokenVerifier, VideoGrants},
-    services::{
-        ServiceError,
-        room::{CreateRoomOptions, RoomClient},
+    extract::{
+        Path, State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
-    webhooks::WebhookReceiver,
+    http::StatusCode,
+    response::Response,
 };
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::time::Duration;
+pub use sfu::Hub;
+use std::time::{Duration, Instant};
+
 #[derive(Clone, Serialize)]
 pub struct Lease {
     pub channel_id: String,
     pub identity: String,
     pub user_id: String,
+    pub name: String,
     #[serde(skip)]
     pub session_hash: String,
     pub lease: String,
@@ -34,169 +36,86 @@ pub struct Lease {
     pub muted: bool,
     pub camera: bool,
     pub screen: bool,
+    pub screen_audio_muted: bool,
     #[serde(skip)]
     pub issued_at: i64,
+    #[serde(skip)]
+    pub token_hash: String,
+    #[serde(skip)]
+    pub socket: String,
 }
-fn client(s: &AppState) -> RoomClient {
-    RoomClient::with_api_key(
-        &s.config.livekit_internal,
-        &s.config.livekit_key,
-        &s.config.livekit_secret,
-    )
-}
-fn unavailable() -> AppError {
-    AppError(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "Servidor de mídia indisponível. Tente novamente.",
-    )
-}
-fn not_found(e: &ServiceError) -> bool {
-    e.to_string().contains("not_found")
-}
-async fn remove(s: &AppState, lease: &Lease) -> Result<()> {
-    match tokio::time::timeout(
-        Duration::from_secs(5),
-        client(s).remove_participant(&lease.channel_id, &lease.identity),
-    )
-    .await
-    {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) if not_found(&e) => Ok(()),
-        _ => Err(unavailable()),
-    }
-}
-pub fn mint(s: &AppState, room: &str, identity: &str, name: &str) -> Result<String> {
-    AccessToken::with_api_key(&s.config.livekit_key, &s.config.livekit_secret)
-        .with_identity(identity)
-        .with_name(name)
-        .with_ttl(Duration::from_secs(60))
-        .with_grants(VideoGrants {
-            room_join: true,
-            room: room.into(),
-            can_publish: Some(true),
-            can_subscribe: Some(true),
-            can_publish_data: Some(false),
-            can_update_own_metadata: Some(false),
-            can_publish_sources: vec![
-                "microphone".into(),
-                "camera".into(),
-                "screen_share".into(),
-                "screen_share_audio".into(),
-            ],
-            ..Default::default()
-        })
-        .to_jwt()
-        .map_err(|_| AppError::internal())
-}
+
 pub async fn join(
     State(s): State<AppState>,
     user: Session,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
     s.rate(format!("join:{}", user.user.id), 15).await?;
-    let mut voice = s.voice.lock().await;
     if channels::find(&s, &id).await?.kind != "voice" {
         return Err(AppError::bad("Este canal não é de voz"));
     }
+    let mut voice = s.voice.lock().await;
     if let Some(old) = voice.get(&user.user.id) {
-        let active = if old.connected {
-            let participants = match tokio::time::timeout(
-                Duration::from_secs(5),
-                client(&s).list_participants(&old.channel_id),
-            )
-            .await
-            {
-                Ok(Ok(p)) => p,
-                Ok(Err(e)) if not_found(&e) => vec![],
-                _ => return Err(unavailable()),
-            };
-            participants.iter().any(|p| p.identity == old.identity)
-        } else {
-            now() - old.issued_at < 75
-        };
-        if active {
+        if old.connected || now() - old.issued_at < 60 {
             return Err(AppError(
                 StatusCode::CONFLICT,
                 "Sua conta já está em uma chamada. Saia da chamada na outra aba ou dispositivo.",
             ));
         }
-        remove(&s, old).await?;
+        let old_id = old.lease.clone();
+        s.media.remove_lease(&old_id).await;
     }
-    // Reclaim orphaned identities after an API restart before issuing a new grant.
-    let sf = client(&s);
-    let rooms = tokio::time::timeout(Duration::from_secs(5), sf.list_rooms(vec![]))
-        .await
-        .map_err(|_| unavailable())?
-        .map_err(|_| unavailable())?;
-    let prefix = format!("{}:", user.user.id);
-    for room in rooms {
-        let participants =
-            tokio::time::timeout(Duration::from_secs(5), sf.list_participants(&room.name))
-                .await
-                .map_err(|_| unavailable())?
-                .map_err(|_| unavailable())?;
-        for participant in participants
-            .into_iter()
-            .filter(|p| p.identity.starts_with(&prefix))
-        {
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                sf.remove_participant(&room.name, &participant.identity),
-            )
-            .await
-            .map_err(|_| unavailable())?
-            .map_err(|_| unavailable())?;
-        }
+    if voice.values().filter(|v| v.channel_id == id).count() >= 20 {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            "A chamada está cheia (20 participantes).",
+        ));
     }
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        client(&s).create_room(
-            &id,
-            CreateRoomOptions {
-                max_participants: 20,
-                empty_timeout: 300,
-                ..Default::default()
-            },
-        ),
-    )
-    .await
-    .map_err(|_| unavailable())?
-    .map_err(|_| unavailable())?;
     let lease = uuid::Uuid::new_v4().to_string();
-    let identity = format!("{}:{lease}", user.user.id);
-    let token = mint(&s, &id, &identity, &user.user.username)?;
+    let token = auth::token();
     voice.insert(
         user.user.id.clone(),
         Lease {
             channel_id: id.clone(),
-            identity,
+            identity: format!("{}:{lease}", user.user.id),
             user_id: user.user.id,
+            name: user.user.username,
             session_hash: user.hash,
             lease: lease.clone(),
             connected: false,
             muted: true,
             camera: false,
             screen: false,
+            screen_audio_muted: false,
             issued_at: now(),
+            token_hash: auth::digest(&token),
+            socket: String::new(),
         },
     );
     Ok(Json(
-        json!({"url":s.config.livekit_url,"token":token,"lease":lease,"room":id}),
+        json!({"url":"/api/media/ws", "token":token, "lease":lease, "room":id,
+        "iceServers":s.config.media_ice_servers}),
     ))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LeaveInput {
-    lease: String,
+    pub lease: String,
 }
 pub async fn release(s: &AppState, user: &Session, lease: Option<&str>) -> Result<()> {
-    let mut voice = s.voice.lock().await;
-    if let Some(old) = voice.get(&user.user.id)
-        && old.session_hash == user.hash
-        && lease.is_none_or(|id| id == old.lease)
-    {
-        remove(s, old).await?;
-        voice.remove(&user.user.id);
+    let removed = {
+        let mut voice = s.voice.lock().await;
+        if voice
+            .get(&user.user.id)
+            .is_some_and(|v| v.session_hash == user.hash && lease.is_none_or(|l| l == v.lease))
+        {
+            voice.remove(&user.user.id)
+        } else {
+            None
+        }
+    };
+    if let Some(v) = removed {
+        s.media.remove_lease(&v.lease).await;
         s.emit(Event::PresenceChanged);
     }
     Ok(())
@@ -210,68 +129,291 @@ pub async fn leave(
     Ok(Json(json!({"ok":true})))
 }
 pub async fn delete_room(s: &AppState, id: &str) -> Result<()> {
-    let mut voice = s.voice.lock().await;
-    match tokio::time::timeout(Duration::from_secs(5), client(s).delete_room(id)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) if not_found(&e) => {}
-        _ => return Err(unavailable()),
-    };
     sqlx::query("DELETE FROM channels WHERE id=?")
         .bind(id)
         .execute(&s.db)
         .await?;
-    voice.retain(|_, v| v.channel_id != id);
+    let removed = {
+        let mut voice = s.voice.lock().await;
+        let ids: Vec<_> = voice
+            .values()
+            .filter(|v| v.channel_id == id)
+            .map(|v| v.lease.clone())
+            .collect();
+        voice.retain(|_, v| v.channel_id != id);
+        ids
+    };
+    for lease in removed {
+        s.media.remove_lease(&lease).await;
+    }
     s.emit(Event::PresenceChanged);
     Ok(())
 }
-pub async fn webhook(
+async fn authorize(s: &AppState, user: &Session, lease: &str) -> Result<Lease> {
+    s.voice
+        .lock()
+        .await
+        .get(&user.user.id)
+        .filter(|v| v.lease == lease && v.session_hash == user.hash && v.connected)
+        .cloned()
+        .ok_or_else(AppError::forbidden)
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Offer {
+    pub lease: String,
+    pub sdp: String,
+    pub source: Option<sfu::Source>,
+    pub publication: Option<String>,
+    pub rid: Option<String>,
+    pub replace: Option<String>,
+}
+pub async fn publish(
     State(s): State<AppState>,
-    headers: HeaderMap,
-    body: String,
+    user: Session,
+    Json(i): Json<Offer>,
 ) -> Result<Json<Value>> {
-    let auth = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(AppError::unauthorized)?;
-    let event = WebhookReceiver::new(TokenVerifier::with_api_key(
-        &s.config.livekit_key,
-        &s.config.livekit_secret,
-    ))
-    .receive(&body, auth)
-    .map_err(|_| AppError::unauthorized())?;
-    if let (Some(room), Some(p)) = (event.room, event.participant) {
-        let user_id = p.identity.split(':').next().unwrap_or_default();
+    // Covers a full room (19 peers × 4 sources) plus simulcast layer switches.
+    s.rate(format!("media-offer:{}", user.user.id), 240).await?;
+    let lease = authorize(&s, &user, &i.lease).await?;
+    let source = i.source.ok_or_else(|| AppError::bad("Fonte ausente"))?;
+    let result = s.media.publish(&s.config, &lease, source, i.sdp).await?;
+    // A lease can be revoked while ICE gathering is in progress.
+    if authorize(&s, &user, &i.lease).await.is_err() {
+        s.media.remove_lease(&i.lease).await;
+        return Err(AppError::forbidden());
+    }
+    Ok(Json(result))
+}
+pub async fn subscribe(
+    State(s): State<AppState>,
+    user: Session,
+    Json(i): Json<Offer>,
+) -> Result<Json<Value>> {
+    s.rate(format!("media-offer:{}", user.user.id), 240).await?;
+    let lease = authorize(&s, &user, &i.lease).await?;
+    let publication = i
+        .publication
+        .ok_or_else(|| AppError::bad("Publicação ausente"))?;
+    let result = s
+        .media
+        .subscribe(
+            &s.config,
+            &lease,
+            &publication,
+            i.sdp,
+            i.rid.as_deref(),
+            i.replace.as_deref(),
+        )
+        .await?;
+    if authorize(&s, &user, &i.lease).await.is_err() {
+        s.media.remove_lease(&i.lease).await;
+        return Err(AppError::forbidden());
+    }
+    Ok(Json(result))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloseInput {
+    pub lease: String,
+    pub id: String,
+}
+pub async fn close(
+    State(s): State<AppState>,
+    user: Session,
+    Json(i): Json<CloseInput>,
+) -> Result<Json<Value>> {
+    authorize(&s, &user, &i.lease).await?;
+    s.media.remove_owned(&i.id, &i.lease).await;
+    Ok(Json(json!({"ok":true})))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlInput {
+    pub lease: String,
+    pub id: String,
+    pub paused: bool,
+}
+pub async fn control(
+    State(s): State<AppState>,
+    user: Session,
+    Json(i): Json<ControlInput>,
+) -> Result<Json<Value>> {
+    s.rate(format!("media-control:{}", user.user.id), 600)
+        .await?;
+    authorize(&s, &user, &i.lease).await?;
+    s.media.control(&i.id, &i.lease, i.paused).await?;
+    Ok(Json(json!({"ok":true})))
+}
+
+pub async fn upgrade(
+    State(s): State<AppState>,
+    user: Session,
+    ws: WebSocketUpgrade,
+) -> Result<Response> {
+    s.rate(format!("media-ws:{}", user.user.id), 60).await?;
+    Ok(ws
+        .max_message_size(2048)
+        .max_frame_size(2048)
+        .on_upgrade(move |socket| signal(s, user, socket)))
+}
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum Signal {
+    Hello {
+        lease: String,
+        token: String,
+    },
+    State {
+        muted: bool,
+        camera: bool,
+        screen: bool,
+        #[serde(default)]
+        screen_audio_muted: bool,
+    },
+}
+async fn signal(s: AppState, user: Session, mut socket: WebSocket) {
+    let hello = tokio::time::timeout(Duration::from_secs(5), socket.next()).await;
+    let Ok(Some(Ok(Message::Text(raw)))) = hello else {
+        return;
+    };
+    let Ok(Signal::Hello { lease, token }) = serde_json::from_str(&raw) else {
+        return;
+    };
+    let epoch = uuid::Uuid::new_v4().to_string();
+    {
         let mut voice = s.voice.lock().await;
-        match event.event.as_str() {
-            "participant_joined" => {
-                if let Some(v) = voice
-                    .get_mut(user_id)
-                    .filter(|v| v.identity == p.identity && v.channel_id == room.name)
-                {
-                    v.connected = true;
-                } else {
-                    // Reject stale tokens and calls whose backend lease no longer exists.
-                    drop(voice);
-                    tokio::time::timeout(
-                        Duration::from_secs(5),
-                        client(&s).remove_participant(&room.name, &p.identity),
-                    )
-                    .await
-                    .map_err(|_| unavailable())?
-                    .map_err(|_| unavailable())?;
-                    return Ok(Json(json!({"ok":true})));
-                }
+        let Some(v) = voice.get_mut(&user.user.id).filter(|v| {
+            v.lease == lease
+                && v.session_hash == user.hash
+                && v.token_hash == auth::digest(&token)
+                && (v.connected || now() - v.issued_at < 60)
+        }) else {
+            return;
+        };
+        v.connected = true;
+        v.socket = epoch.clone();
+    }
+    s.emit(Event::PresenceChanged);
+    let (mut sink, mut stream) = socket.split();
+    let mut changed = s.media.changed.subscribe();
+    let mut events = s.events.subscribe();
+    let mut tick = tokio::time::interval(Duration::from_secs(15));
+    let mut pong = Instant::now();
+    let mut send_snapshot = true;
+    loop {
+        if send_snapshot {
+            let voice = s.voice.lock().await;
+            let Some(own) = voice
+                .get(&user.user.id)
+                .filter(|v| v.lease == lease && v.socket == epoch)
+            else {
+                break;
+            };
+            let peers: Vec<_> = voice
+                .values()
+                .filter(|v| v.channel_id == own.channel_id && v.connected)
+                .cloned()
+                .collect();
+            let publications = s.media.publications(&own.channel_id).await;
+            let snapshot = json!({"type":"snapshot", "identity":own.identity, "peers":peers, "publications":publications});
+            drop(voice);
+            if !matches!(
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    sink.send(Message::Text(snapshot.to_string().into()))
+                )
+                .await,
+                Ok(Ok(()))
+            ) {
+                break;
             }
-            "participant_left" | "participant_connection_aborted"
-                if voice
-                    .get(user_id)
-                    .is_some_and(|v| v.identity == p.identity && v.channel_id == room.name) =>
-            {
-                voice.remove(user_id);
-            }
-            _ => {}
+            send_snapshot = false;
         }
+        tokio::select! {
+            _ = tick.tick() => {
+                let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND expires_at>?)")
+                    .bind(&user.hash).bind(now()).fetch_one(&s.db).await.unwrap_or(false);
+                if !valid || pong.elapsed() > Duration::from_secs(45) { break }
+                send_snapshot = true;
+                if sink.send(Message::Ping(vec![].into())).await.is_err() { break }
+            }
+            event = events.recv() => {
+                if matches!(event, Ok(Event::Shutdown)) { break }
+                if matches!(event, Ok(Event::SessionRevoked{ref session_hash}) if session_hash == &user.hash) { break }
+                send_snapshot = true;
+            }
+            _ = changed.recv() => send_snapshot = true,
+            incoming = stream.next() => match incoming {
+                Some(Ok(Message::Pong(_))) => pong = Instant::now(),
+                Some(Ok(Message::Text(raw))) => {
+                    if s.rate(format!("media-state:{}",user.user.id),120).await.is_err() { break }
+                    let Ok(Signal::State{muted,camera,screen,screen_audio_muted}) = serde_json::from_str(&raw) else { break };
+                    let mut voice = s.voice.lock().await;
+                    let Some(v) = voice.get_mut(&user.user.id).filter(|v| v.lease == lease && v.socket == epoch) else { break };
+                    v.muted=muted; v.camera=camera; v.screen=screen; v.screen_audio_muted=screen_audio_muted;
+                    s.emit(Event::PresenceChanged);
+                }
+                Some(Ok(Message::Ping(data))) => { if sink.send(Message::Pong(data)).await.is_err() { break } }
+                _ => break,
+            }
+        }
+    }
+    let _ = sink.close().await;
+    {
+        let mut voice = s.voice.lock().await;
+        if let Some(v) = voice
+            .get_mut(&user.user.id)
+            .filter(|v| v.lease == lease && v.socket == epoch)
+        {
+            v.connected = false;
+            v.issued_at = now();
+        }
+    }
+    s.emit(Event::PresenceChanged);
+    // The upgrade task must finish immediately; expiry is guarded atomically by epoch.
+    let weak = std::sync::Arc::downgrade(&s.0);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let Some(inner) = weak.upgrade() else { return };
+        let s = AppState(inner);
+        let removed = {
+            let mut voice = s.voice.lock().await;
+            if voice
+                .get(&user.user.id)
+                .is_some_and(|v| v.lease == lease && v.socket == epoch && !v.connected)
+            {
+                voice.remove(&user.user.id)
+            } else {
+                None
+            }
+        };
+        if let Some(v) = removed {
+            s.media.remove_lease(&v.lease).await;
+            s.emit(Event::PresenceChanged);
+        }
+    });
+}
+
+/// Reap abandoned joins and stalled transports even when no new request arrives.
+pub async fn maintain(s: &AppState) {
+    let stale = {
+        let mut voice = s.voice.lock().await;
+        let stale: Vec<_> = voice
+            .values()
+            .filter(|v| !v.connected && now() - v.issued_at >= 60)
+            .map(|v| (v.user_id.clone(), v.lease.clone()))
+            .collect();
+        for (user, _) in &stale {
+            voice.remove(user);
+        }
+        stale
+    };
+    if !stale.is_empty() {
         s.emit(Event::PresenceChanged);
     }
-    Ok(Json(json!({"ok":true})))
+    for (_, lease) in stale {
+        s.media.remove_lease(&lease).await;
+    }
+    s.media.reap().await;
 }
