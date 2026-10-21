@@ -117,7 +117,11 @@ pub struct Credentials {
     setup_key: String,
 }
 fn validate(c: &Credentials) -> Result<String> {
-    let name = c.username.trim().to_lowercase();
+    validate_password(&c.password)?;
+    validate_username(&c.username)
+}
+pub(crate) fn validate_username(username: &str) -> Result<String> {
+    let name = username.trim().to_lowercase();
     if !(3..=32).contains(&name.len())
         || !name
             .bytes()
@@ -127,12 +131,15 @@ fn validate(c: &Credentials) -> Result<String> {
             "Usuário: 3–32 letras sem acentos, números, _ ou -",
         ));
     }
-    if !(12..=128).contains(&c.password.len()) {
-        return Err(AppError::bad("Senha: entre 12 e 128 bytes"));
-    }
     Ok(name)
 }
-async fn hash_password(s: &AppState, password: String) -> Result<String> {
+pub(crate) fn validate_password(password: &str) -> Result<()> {
+    if !(12..=128).contains(&password.len()) {
+        return Err(AppError::bad("Senha: entre 12 e 128 bytes"));
+    }
+    Ok(())
+}
+pub(crate) async fn hash_password(s: &AppState, password: String) -> Result<String> {
     let permit = s.auth_slots.clone().try_acquire_owned().map_err(|_| {
         AppError(
             StatusCode::TOO_MANY_REQUESTS,

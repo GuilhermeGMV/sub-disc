@@ -536,3 +536,285 @@ async fn websocket_auth_events_and_logout_revocation() {
     .unwrap();
     server.abort();
 }
+
+#[tokio::test]
+async fn admin_accounts_permissions_roles_and_session_revocation() {
+    let t = TestApp::new().await;
+    let admin = t.admin().await;
+    let member = t.member(&admin).await;
+    let (_, me, _) = t.call("GET", "/api/me", json!({}), &member).await;
+    let id = me["id"].as_str().unwrap();
+    let path = format!("/api/users/{id}");
+    let input = json!({"username":"created","password":"strong password 123","role":"member"});
+    assert_eq!(t.call("POST", "/api/users", input.clone(), "").await.0, 401);
+    for (method, route, body) in [
+        ("POST", "/api/users".to_string(), input.clone()),
+        ("PATCH", path.clone(), input.clone()),
+        ("DELETE", path.clone(), json!({})),
+        ("POST", format!("{path}/disconnect"), json!({})),
+        (
+            "POST",
+            "/api/channels".into(),
+            json!({"name":"forbidden","kind":"voice"}),
+        ),
+    ] {
+        assert_eq!(t.call(method, &route, body, &member).await.0, 403);
+    }
+    assert_eq!(
+        t.call(
+            "POST",
+            "/api/users",
+            json!({"username":"invalid","password":"strong password 123","role":"owner"}),
+            &admin
+        )
+        .await
+        .0,
+        400
+    );
+    assert_eq!(
+        t.call(
+            "POST",
+            "/api/users",
+            json!({"username":"invalid","password":"short","role":"member"}),
+            &admin
+        )
+        .await
+        .0,
+        400
+    );
+    let (status, created, _) = t.call("POST", "/api/users", input.clone(), &admin).await;
+    assert_eq!(status, 200);
+    assert_eq!(created["role"], "member");
+    assert!(created.get("password_hash").is_none());
+    assert_eq!(t.call("POST", "/api/users", input, &admin).await.0, 409);
+    let created_path = format!("/api/users/{}", created["id"].as_str().unwrap());
+    assert_eq!(
+        t.call(
+            "PATCH",
+            &created_path,
+            json!({"username":"renamed","role":"admin"}),
+            &admin
+        )
+        .await
+        .0,
+        200
+    );
+    let (status, user, created_cookie) = t
+        .call(
+            "POST",
+            "/api/login",
+            json!({"username":"renamed","password":"strong password 123"}),
+            "",
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(user["role"], "admin");
+    assert_eq!(
+        t.call(
+            "PATCH",
+            &created_path,
+            json!({"username":"renamed","role":"member","password":"replacement password 123"}),
+            &admin
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(
+        t.call("GET", "/api/me", json!({}), &created_cookie).await.0,
+        401
+    );
+    assert_eq!(
+        t.call(
+            "POST",
+            "/api/login",
+            json!({"username":"renamed","password":"replacement password 123"}),
+            ""
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(
+        t.call(
+            "PATCH",
+            "/api/users/missing",
+            json!({"username":"valid","role":"member"}),
+            &admin
+        )
+        .await
+        .0,
+        404
+    );
+    assert_eq!(
+        t.call("DELETE", &created_path, json!({}), &admin).await.0,
+        200
+    );
+    let (_, me, _) = t.call("GET", "/api/me", json!({}), &admin).await;
+    let admin_path = format!("/api/users/{}", me["id"].as_str().unwrap());
+    assert_eq!(
+        t.call(
+            "PATCH",
+            &admin_path,
+            json!({"username":"admin","role":"member"}),
+            &admin
+        )
+        .await
+        .0,
+        400
+    );
+    assert_eq!(
+        t.call("DELETE", &admin_path, json!({}), &admin).await.0,
+        400
+    );
+}
+
+#[tokio::test]
+async fn admin_disconnect_and_delete_account_with_references() {
+    let t = TestApp::new().await;
+    let admin = t.admin().await;
+    let member = t.member(&admin).await;
+    let (_, me, _) = t.call("GET", "/api/me", json!({}), &member).await;
+    let id = me["id"].as_str().unwrap();
+    let path = format!("/api/users/{id}");
+    let (_, state, _) = t.call("GET", "/api/state", json!({}), &admin).await;
+    let text = state["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "text")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    let voice = state["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "voice")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        t.call(
+            "POST",
+            &format!("/api/channels/{text}/messages"),
+            json!({"content":"to be removed"}),
+            &member
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(
+        t.call(
+            "POST",
+            &format!("/api/channels/{voice}/join"),
+            json!({}),
+            &member
+        )
+        .await
+        .0,
+        200
+    );
+    let mut events = t.state.events.subscribe();
+    assert_eq!(
+        t.call("POST", &format!("{path}/disconnect"), json!({}), &admin)
+            .await
+            .0,
+        200
+    );
+    assert!(!t.state.voice.lock().await.contains_key(id));
+    assert!(
+        matches!(events.recv().await.unwrap(), subdisc::websocket::Event::VoiceRemoved { user_id } if user_id == id)
+    );
+    // Kicking revokes only the call; the account may join again.
+    assert_eq!(t.call("GET", "/api/me", json!({}), &member).await.0, 200);
+    assert_eq!(
+        t.call(
+            "POST",
+            &format!("/api/channels/{voice}/join"),
+            json!({}),
+            &member
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(
+        t.call(
+            "PATCH",
+            &path,
+            json!({"username":"friend","role":"admin"}),
+            &admin
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(
+        t.call("POST", "/api/invites", json!({"hours":24}), &member)
+            .await
+            .0,
+        200
+    );
+    assert_eq!(t.call("DELETE", &path, json!({}), &admin).await.0, 200);
+    assert!(!t.state.voice.lock().await.contains_key(id));
+    assert_eq!(t.call("GET", "/api/me", json!({}), &member).await.0, 401);
+    assert_eq!(
+        t.call(
+            "GET",
+            &format!("/api/channels/{text}/messages"),
+            json!({}),
+            &admin
+        )
+        .await
+        .1,
+        json!([])
+    );
+    assert_eq!(t.call("DELETE", &path, json!({}), &admin).await.0, 404);
+}
+
+#[tokio::test]
+async fn concurrent_demotions_preserve_an_administrator() {
+    let t = TestApp::new().await;
+    let first = t.admin().await;
+    let (_, second_user, _) = t
+        .call(
+            "POST",
+            "/api/users",
+            json!({"username":"secondadmin","password":"strong password 123","role":"admin"}),
+            &first,
+        )
+        .await;
+    let (_, _, second) = t
+        .call(
+            "POST",
+            "/api/login",
+            json!({"username":"secondadmin","password":"strong password 123"}),
+            "",
+        )
+        .await;
+    let (_, first_user, _) = t.call("GET", "/api/me", json!({}), &first).await;
+    let first_path = format!("/api/users/{}", first_user["id"].as_str().unwrap());
+    let second_path = format!("/api/users/{}", second_user["id"].as_str().unwrap());
+    let (a, b) = tokio::join!(
+        t.call(
+            "PATCH",
+            &first_path,
+            json!({"username":"admin","role":"member"}),
+            &first
+        ),
+        t.call(
+            "PATCH",
+            &second_path,
+            json!({"username":"secondadmin","role":"member"}),
+            &second
+        ),
+    );
+    assert!((a.0 == 200 && b.0 == 400) || (a.0 == 400 && b.0 == 200));
+    let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role='admin'")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(admins, 1);
+}

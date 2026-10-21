@@ -57,7 +57,7 @@ test('dois amigos: cadastro, chat, WebSocket, áudio, câmera, tela e controles'
   await expect(
     page.getByRole('heading', { name: 'geral', exact: true }),
   ).toBeVisible();
-  await page.getByRole('button', { name: 'Convidar amigos' }).click();
+  await page.getByRole('button', { name: 'Administração' }).click();
   await page
     .getByRole('button', { name: 'Gerar convite', exact: true })
     .click();
@@ -236,4 +236,130 @@ test('dois amigos: cadastro, chat, WebSocket, áudio, câmera, tela e controles'
     ),
   ).toBe(true);
   await ctx.close();
+});
+
+test('administração: contas, roles, canais e remoção de chamada pelo cliente', async ({
+  browser,
+  page,
+}) => {
+  const headers = { Origin: 'http://127.0.0.1:18080' };
+  const status = await (await page.request.get('/api/setup')).json();
+  if (status.needs_setup) {
+    await page.request.post('/api/setup', {
+      headers,
+      data: {
+        username: 'admin',
+        password: 'strong password 123',
+        setup_key: 'a-safe-setup-test-key',
+      },
+    });
+  } else {
+    await page.request.post('/api/login', {
+      headers,
+      data: { username: 'admin', password: 'strong password 123' },
+    });
+  }
+  await page.goto('/admin');
+  await expect(
+    page.getByRole('heading', { name: 'Administração', exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel('Usuário da conta', { exact: true })
+    .fill('panelmember');
+  await page
+    .getByLabel('Senha da conta', { exact: true })
+    .fill('strong password 123');
+  await page
+    .getByRole('button', { name: 'Salvar usuário', exact: true })
+    .click();
+  await expect(
+    page.getByRole('button', { name: 'Editar panelmember', exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('Nome do canal', { exact: true }).fill('painel voz');
+  await page.getByLabel('Tipo do canal', { exact: true }).selectOption('voice');
+  await page.getByRole('button', { name: 'Criar canal', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Excluir painel voz', exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('Nome do canal', { exact: true }).fill('painel texto');
+  await page.getByLabel('Tipo do canal', { exact: true }).selectOption('text');
+  await page.getByRole('button', { name: 'Criar canal', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Excluir painel texto', exact: true }),
+  ).toBeVisible();
+  const context = await browser.newContext({
+    permissions: ['microphone', 'camera'],
+  });
+  try {
+    const member = await context.newPage();
+    await member.goto('/');
+    await credentials(member, 'panelmember');
+    await member.getByRole('button', { name: 'Entrar', exact: true }).click();
+    await expect(
+      member.getByRole('heading', { name: 'geral', exact: true }),
+    ).toBeVisible();
+    await expect(
+      member.getByRole('button', { name: 'Administração' }),
+    ).toHaveCount(0);
+    await member
+      .getByRole('button', { name: 'painel voz', exact: true })
+      .click();
+    await expect(
+      member.getByRole('button', { name: 'Sair da chamada', exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole('button', {
+        name: 'Tirar panelmember da chamada',
+        exact: true,
+      })
+      .click();
+    await expect(
+      member.getByRole('button', { name: 'Sair da chamada', exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      member.getByRole('heading', { name: 'painel voz', exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole('button', { name: 'Editar panelmember', exact: true })
+      .click();
+    await page
+      .getByLabel('Usuário da conta', { exact: true })
+      .fill('panelrenamed');
+    await page
+      .getByLabel('Role da conta', { exact: true })
+      .selectOption('admin');
+    await page
+      .getByRole('button', { name: 'Salvar usuário', exact: true })
+      .click();
+    await expect(
+      member.getByRole('button', { name: 'Administração' }),
+    ).toBeVisible();
+    await page
+      .getByRole('button', { name: 'Editar panelrenamed', exact: true })
+      .click();
+    await page
+      .getByLabel('Role da conta', { exact: true })
+      .selectOption('member');
+    await page
+      .getByRole('button', { name: 'Salvar usuário', exact: true })
+      .click();
+    await expect(
+      member.getByRole('button', { name: 'Administração' }),
+    ).toHaveCount(0);
+    page.once('dialog', (dialog) => dialog.accept());
+    await page
+      .getByRole('button', {
+        name: 'Apagar conta de panelrenamed',
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.getByRole('button', { name: 'Editar panelrenamed', exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      member.getByRole('button', { name: 'Entrar', exact: true }),
+    ).toBeVisible();
+  } finally {
+    await context.close();
+  }
 });

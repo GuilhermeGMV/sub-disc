@@ -13,6 +13,10 @@ Todas as rotas usam `/api`. Respostas JSON; falhas de aplicação têm `{"error"
 | GET `/me` | Usuário da sessão | Sessão |
 | POST `/invites` | `hours`: 1–168; retorna token e URL | Administrador |
 | GET `/users` | IDs opacos, nomes, papéis | Sessão |
+| POST `/users` | `username`, `password` (12–128 bytes), `role`: admin/member | Administrador |
+| PATCH `/users/:id` | `username`, `role`; `password` opcional/vazia mantém a atual | Administrador |
+| DELETE `/users/:id` | Apaga conta, mensagens e convites; revoga sessões e mídia | Administrador |
+| POST `/users/:id/disconnect` | `{}`; encerra a chamada e seus transportes | Administrador |
 | GET `/state` | Usuários, canais, online e voz | Sessão |
 | GET/POST `/channels` | POST: `name`, `kind`: text/voice | Membro lê, administrador cria |
 | PATCH `/channels/:id` | `name`, `kind` existente | Administrador |
@@ -47,3 +51,18 @@ Ao conectar e quando o consumidor fica atrasado, o servidor envia `{"v":1,"type"
 A lease deve pertencer ao usuário e à sessão autenticados. Campos desconhecidos ou versão incompatível encerram a conexão. Estados idênticos não são reenviados pelo cliente a cada mudança de falante. Mídia não trafega por esse socket. Presença online conta conexões de todas as abas; fechar uma delas não coloca offline uma conta que mantém outra aberta. Ping a cada 25 segundos, timeout de 60 segundos, revalidação periódica da sessão e revogação imediata após logout. Hashes de sessão nunca são serializados em eventos públicos.
 
 As chaves LiveKit permitem administração do SFU e devem ser mantidas no servidor. Tokens de entrada aceitam somente microphone, camera, screen_share e screen_share_audio para uma sala; não concedem administração, criação explícita de salas, alteração de metadata ou publicação de dados. A validade do token limita a entrada inicial; reconexões seguem o mecanismo oficial do SDK.
+
+## Administração
+
+O painel **Administração** fica no cliente web servido pelo backend e no cliente
+Rust/egui. No navegador, `/admin` também abre o painel após login. Ambos usam as rotas autenticadas acima. Apenas `admin` e `member`
+são aceitos, inclusive pelo CHECK do SQLite. O setup cria o primeiro admin;
+convites criam membros. Admins podem criar contas diretamente e editar nome,
+senha e role. O último administrador não pode ser excluído nem rebaixado;
+a verificação ocorre na mesma transação SQLite que a alteração.
+
+Trocar a senha revoga todas as sessões e encerra a mídia da conta. Apagar uma
+conta remove também suas mensagens e os convites criados ou usados por ela,
+por isso a interface solicita confirmação. Tirar alguém da chamada invalida
+seu lease, remove o participante do LiveKit e envia `voice_reset` apenas às conexões
+daquela conta. O usuário continua autenticado e pode entrar novamente.
