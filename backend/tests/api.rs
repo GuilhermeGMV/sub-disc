@@ -155,6 +155,41 @@ async fn setup_login_logout_and_persistence() {
     assert_eq!(t.call("GET", "/api/me", json!({}), &c).await.0, 401);
     assert_eq!(t.call("GET", "/api/me", json!({}), &admin).await.0, 200);
 }
+async fn session_expiry(t: &TestApp) -> i64 {
+    sqlx::query_scalar("SELECT expires_at FROM sessions")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap()
+}
+#[tokio::test]
+async fn sessions_renew_while_in_use() {
+    let t = TestApp::new().await;
+    let cookie = t.admin().await;
+    let token = cookie.split(';').next().unwrap();
+    let first = session_expiry(&t).await;
+    let (s, _, c) = t.call("GET", "/api/me", json!({}), &cookie).await;
+    assert_eq!(s, 200);
+    assert!(c.starts_with(token) && c.contains("HttpOnly"));
+    // Sessão recente: nenhuma escrita a cada pedido.
+    assert_eq!(session_expiry(&t).await, first);
+    sqlx::query("UPDATE sessions SET expires_at=?")
+        .bind(subdisc::now() + 10 * 86400)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let (s, _, c) = t.call("GET", "/api/me", json!({}), &cookie).await;
+    assert_eq!(s, 200);
+    assert!(session_expiry(&t).await >= subdisc::now() + 30 * 86400 - 5);
+    let age: i64 = c
+        .split("Max-Age=")
+        .nth(1)
+        .and_then(|v| v.split(';').next())
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(age > 29 * 86400);
+    assert!(c.starts_with(token));
+}
 #[tokio::test]
 async fn invitations_are_private_expiring_single_use_and_atomic() {
     let t = TestApp::new().await;
