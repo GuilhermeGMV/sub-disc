@@ -18,10 +18,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
+/// Validade da sessão, contada a partir do último uso (ver `authenticate`).
+const SESSION_TTL: i64 = 30 * 86400;
 #[derive(Clone)]
 pub struct Session {
     pub user: User,
     pub hash: String,
+    raw: String,
+    expires_at: i64,
 }
 impl FromRequestParts<AppState> for Session {
     type Rejection = AppError;
@@ -50,8 +54,23 @@ pub async fn authenticate(headers: &HeaderMap, s: &AppState) -> Result<Session> 
         return Err(AppError::unauthorized());
     }
     let hash = digest(raw);
-    let user=sqlx::query_as::<_,User>("SELECT u.id,u.username,u.role FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>?").bind(&hash).bind(now()).fetch_optional(&s.db).await?.ok_or_else(AppError::unauthorized)?;
-    Ok(Session { user, hash })
+    let (id,username,role,mut expires_at)=sqlx::query_as::<_,(String,String,String,i64)>("SELECT u.id,u.username,u.role,s.expires_at FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>?").bind(&hash).bind(now()).fetch_optional(&s.db).await?.ok_or_else(AppError::unauthorized)?;
+    // Quem usa o app não precisa entrar de novo: a sessão só expira depois de
+    // 30 dias sem uso. Grava no máximo uma vez a cada 15 dias por sessão.
+    if expires_at - now() < SESSION_TTL / 2 {
+        expires_at = now() + SESSION_TTL;
+        sqlx::query("UPDATE sessions SET expires_at=? WHERE token_hash=?")
+            .bind(expires_at)
+            .bind(&hash)
+            .execute(&s.db)
+            .await?;
+    }
+    Ok(Session {
+        user: User { id, username, role },
+        hash,
+        raw: raw.to_owned(),
+        expires_at,
+    })
 }
 pub fn admin(s: &Session) -> Result<()> {
     if s.user.role != "admin" {
@@ -75,13 +94,13 @@ async fn session_response(s: &AppState, user: User) -> Result<(HeaderMap, Json<U
     sqlx::query("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)")
         .bind(digest(&raw))
         .bind(&user.id)
-        .bind(now() + 30 * 86400)
+        .bind(now() + SESSION_TTL)
         .execute(&s.db)
         .await?;
     let mut headers = HeaderMap::new();
     headers.insert(
         header::SET_COOKIE,
-        cookie(s, &raw, 30 * 86400)
+        cookie(s, &raw, SESSION_TTL)
             .parse()
             .map_err(|_| AppError::internal())?,
     );
@@ -279,8 +298,17 @@ pub async fn login(
         )),
     }
 }
-pub async fn me(session: Session) -> Json<User> {
-    Json(session.user)
+/// Também devolve o cookie com a validade atual, para o navegador acompanhar a
+/// renovação feita em `authenticate`.
+pub async fn me(State(s): State<AppState>, session: Session) -> Result<(HeaderMap, Json<User>)> {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::SET_COOKIE,
+        cookie(&s, &session.raw, session.expires_at - now())
+            .parse()
+            .map_err(|_| AppError::internal())?,
+    );
+    Ok((headers, Json(session.user)))
 }
 pub async fn logout(
     State(s): State<AppState>,

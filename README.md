@@ -88,7 +88,7 @@ Abra **http://localhost:5173**. `dev.sh` inicia Vite, Rust e LiveKit, encerra se
 ## Segurança e limites
 
 - Argon2id com sal aleatório; hashing fora do executor assíncrono, limitado a quatro operações simultâneas.
-- Sessões aleatórias de 256 bits; apenas SHA-256 do segredo no banco. Expiração em 30 dias, cookies HttpOnly e SameSite=Strict; Secure obrigatório em produção. Logout revoga a sessão e fecha seus WebSockets.
+- Sessões aleatórias de 256 bits; apenas SHA-256 do segredo no banco. Expiração após 30 dias sem uso (o uso renova a sessão), cookies HttpOnly e SameSite=Strict; Secure obrigatório em produção. Logout revoga a sessão e fecha seus WebSockets.
 - Convites aleatórios de 256 bits, armazenados como hash; consumo atômico com `BEGIN IMMEDIATE`. A primeira conta também é criada em transação exclusiva e exige a chave de instalação.
 - Verificação exata de Origin em mutações e no upgrade WebSocket. Sem CORS liberado. Webhooks usam assinatura do SDK e hash do corpo bruto.
 - Queries parametrizadas, limites de corpo e mensagens, escape do Svelte, CSP, bloqueio de frames e headers de cache restritivos.
