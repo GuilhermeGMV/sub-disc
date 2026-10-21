@@ -15,6 +15,9 @@ struct TestApp {
 }
 impl TestApp {
     async fn new() -> Self {
+        Self::with_livekit("http://127.0.0.1:1".into()).await
+    }
+    async fn with_livekit(livekit_internal: String) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let config = Config {
             database_url: format!("sqlite://{}", dir.path().join("test.db").display()),
@@ -23,7 +26,7 @@ impl TestApp {
             secure: false,
             setup_key: "a-safe-setup-test-key".into(),
             livekit_url: "ws://localhost:7880".into(),
-            livekit_internal: "http://127.0.0.1:1".into(),
+            livekit_internal,
             livekit_key: "testkey".into(),
             livekit_secret: "test-secret-at-least-thirty-two-characters".into(),
             static_dir: "../frontend/dist".into(),
@@ -671,7 +674,44 @@ async fn admin_accounts_permissions_roles_and_session_revocation() {
 
 #[tokio::test]
 async fn admin_disconnect_and_delete_account_with_references() {
-    let t = TestApp::new().await;
+    use axum::{body::Bytes, extract::Path, routing::post};
+    use prost::Message;
+    use std::sync::{Arc, Mutex};
+    let removed = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let recorded = removed.clone();
+    let mock = Router::new().route(
+        "/twirp/livekit.RoomService/{method}",
+        post(move |Path(method): Path<String>, body: Bytes| {
+            let recorded = recorded.clone();
+            async move {
+                match method.as_str() {
+                    "ListRooms" | "ListParticipants" => vec![],
+                    "CreateRoom" => {
+                        let request = livekit_protocol::CreateRoomRequest::decode(body).unwrap();
+                        livekit_protocol::Room {
+                            name: request.name,
+                            ..Default::default()
+                        }
+                        .encode_to_vec()
+                    }
+                    "RemoveParticipant" => {
+                        let request =
+                            livekit_protocol::RoomParticipantIdentity::decode(body).unwrap();
+                        recorded
+                            .lock()
+                            .unwrap()
+                            .push(json!({"room":request.room,"identity":request.identity}));
+                        vec![]
+                    }
+                    other => panic!("Unexpected LiveKit method: {other}"),
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+    let t = TestApp::with_livekit(url).await;
     let admin = t.admin().await;
     let member = t.member(&admin).await;
     let (_, me, _) = t.call("GET", "/api/me", json!({}), &member).await;
@@ -772,6 +812,16 @@ async fn admin_disconnect_and_delete_account_with_references() {
         json!([])
     );
     assert_eq!(t.call("DELETE", &path, json!({}), &admin).await.0, 404);
+    let calls = removed.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert!(calls.iter().all(|call| {
+        call["room"] == voice
+            && call["identity"]
+                .as_str()
+                .unwrap()
+                .starts_with(&format!("{id}:"))
+    }));
+    server.abort();
 }
 
 #[tokio::test]

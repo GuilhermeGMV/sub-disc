@@ -201,6 +201,18 @@ pub async fn release(s: &AppState, user: &Session, lease: Option<&str>) -> Resul
     }
     Ok(())
 }
+/// Revoke the local lease even if LiveKit is temporarily unavailable. A stale
+/// token is rejected by the webhook, and every client receives voice_reset.
+pub async fn disconnect_user(s: &AppState, id: &str) -> Result<()> {
+    let mut voice = s.voice.lock().await;
+    let Some(lease) = voice.remove(id) else {
+        return Ok(());
+    };
+    let result = remove(s, &lease).await;
+    s.emit(Event::VoiceRemoved { user_id: id.into() });
+    s.emit(Event::PresenceChanged);
+    result
+}
 pub async fn leave(
     State(s): State<AppState>,
     user: Session,

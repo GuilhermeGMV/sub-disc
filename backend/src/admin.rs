@@ -140,9 +140,6 @@ pub async fn update(
     if hash.is_some() {
         remove_voice(&s, &id).await;
     }
-    if let Some(lease) = s.voice.lock().await.get_mut(&id) {
-        lease.name = username.clone();
-    }
     s.emit(Event::UsersChanged);
     Ok(Json(User {
         id,
@@ -188,11 +185,8 @@ pub async fn delete(
     Ok(Json(json!({"ok":true})))
 }
 async fn remove_voice(s: &AppState, id: &str) {
-    let removed = s.voice.lock().await.remove(id);
-    if let Some(lease) = removed {
-        s.media.remove_lease(&lease.lease).await;
-        s.emit(Event::VoiceRemoved { user_id: id.into() });
-        s.emit(Event::PresenceChanged);
+    if crate::media::disconnect_user(s, id).await.is_err() {
+        tracing::warn!("Account sessions revoked, but LiveKit participant removal failed");
     }
 }
 pub async fn disconnect(
@@ -202,6 +196,6 @@ pub async fn disconnect(
 ) -> Result<Json<Value>> {
     auth::admin(&actor)?;
     find(&s, &id).await?;
-    remove_voice(&s, &id).await;
+    crate::media::disconnect_user(&s, &id).await?;
     Ok(Json(json!({"ok":true})))
 }

@@ -2743,6 +2743,8 @@ dependencies = [
  "hex",
  "http-body-util",
  "livekit-api",
+ "livekit-protocol",
+ "prost",
  "rand 0.8.8",
  "serde",
  "serde_json",
