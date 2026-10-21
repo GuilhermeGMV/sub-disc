@@ -311,6 +311,7 @@
       accountRole = 'member';
       editingAccount = null;
       snapshot = await api('/state');
+      reconcileSelection();
     } catch (e) {
       report(e);
     } finally {
@@ -327,7 +328,14 @@
     adminBusy = true;
     try {
       await api(`/users/${account.id}`, { method: 'DELETE' });
+      if (editingAccount?.id === account.id) {
+        editingAccount = null;
+        accountName = '';
+        accountPassword = '';
+        accountRole = 'member';
+      }
       snapshot = await api('/state');
+      reconcileSelection();
     } catch (e) {
       report(e);
     } finally {
