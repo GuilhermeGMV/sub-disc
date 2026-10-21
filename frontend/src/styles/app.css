@@ -867,6 +867,9 @@ kbd {
   padding: 28px;
   box-shadow: 0 25px 100px #0007;
 }
+.admin-modal {
+  max-width: 720px;
+}
 .modal-title {
   display: flex;
   align-items: center;

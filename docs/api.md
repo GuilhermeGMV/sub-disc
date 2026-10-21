@@ -13,6 +13,10 @@ Todas as rotas usam `/api`. Respostas JSON; falhas de aplicação têm `{"error"
 | GET `/me` | Usuário da sessão | Sessão |
 | POST `/invites` | `hours`: 1–168; retorna token e URL | Administrador |
 | GET `/users` | IDs opacos, nomes, papéis | Sessão |
+| POST `/users` | `username`, `password` (12–128 bytes), `role`: admin/member | Administrador |
+| PATCH `/users/:id` | `username`, `role`; `password` opcional/vazia mantém a atual | Administrador |
+| DELETE `/users/:id` | Apaga conta, mensagens e convites; revoga sessões e mídia | Administrador |
+| POST `/users/:id/disconnect` | `{}`; encerra a chamada e seus transportes | Administrador |
 | GET `/state` | Usuários, canais, online e voz | Sessão |
 | GET/POST `/channels` | POST: `name`, `kind`: text/voice | Membro lê, administrador cria |
 | PATCH `/channels/:id` | `name`, `kind` existente | Administrador |
@@ -84,3 +88,18 @@ reconectam por até 45 segundos. O novo socket substitui o anterior usando uma
 remoção da sala e saída explícita fecham publicações e assinaturas dependentes.
 Reiniciar o backend invalida todos os leases: o cliente informa que é preciso
 entrar novamente. Limite JSON: 64 KiB; sinalização WS: 2 KiB por evento.
+
+## Administração
+
+O painel **Administração** fica no cliente web servido pelo backend e no cliente
+Rust/egui. No navegador, `/admin` também abre o painel após login. Ambos usam as rotas autenticadas acima. Apenas `admin` e `member`
+são aceitos, inclusive pelo CHECK do SQLite. O setup cria o primeiro admin;
+convites criam membros. Admins podem criar contas diretamente e editar nome,
+senha e role. O último administrador não pode ser excluído nem rebaixado;
+a verificação ocorre na mesma transação SQLite que a alteração.
+
+Trocar a senha revoga todas as sessões e encerra a mídia da conta. Apagar uma
+conta remove também suas mensagens e os convites criados ou usados por ela,
+por isso a interface solicita confirmação. Tirar alguém da chamada invalida
+seu lease, fecha os transportes SFU e envia `voice_reset` apenas às conexões
+daquela conta. O usuário continua autenticado e pode entrar novamente.

@@ -74,12 +74,17 @@
     showMembers = true,
     showDevices = false,
     quality = 'balanced';
-  let adminPanel = false,
+  let adminPanel = location.pathname === '/admin',
     inviteUrl = '',
     adminBusy = false,
     channelName = '',
     channelKind = 'text',
     editing: Channel | null = null;
+  let accountName = '',
+    accountPassword = '',
+    accountRole = 'member',
+    accountSearch = '';
+  let editingAccount: User | null = null;
   $: voiceChannel = snapshot.channels.find((c) => c.id === $media.channelId);
   $: onlineUsers = snapshot.users.filter((u) => snapshot.online.includes(u.id));
   $: offlineUsers = snapshot.users.filter(
@@ -177,7 +182,7 @@
       retry = setTimeout(
         async () => {
           try {
-            await api<User>('/me');
+            user = await api<User>('/me');
             connect();
           } catch (e) {
             if (e instanceof ApiError && e.status === 401) {
@@ -191,6 +196,7 @@
     };
   }
   function reconcileSelection() {
+    if (user) user = snapshot.users.find((u) => u.id === user!.id) || user;
     if (selected) {
       selected = snapshot.channels.find((c) => c.id === selected!.id) || null;
     }
@@ -283,6 +289,56 @@
     try {
       const r = await post<{ url: string }>('/invites', { hours: 24 });
       inviteUrl = r.url;
+    } catch (e) {
+      report(e);
+    } finally {
+      adminBusy = false;
+    }
+  }
+  async function saveAccount() {
+    adminBusy = true;
+    try {
+      await api(editingAccount ? `/users/${editingAccount.id}` : '/users', {
+        method: editingAccount ? 'PATCH' : 'POST',
+        body: JSON.stringify({
+          username: accountName,
+          password: accountPassword,
+          role: accountRole,
+        }),
+      });
+      accountName = '';
+      accountPassword = '';
+      accountRole = 'member';
+      editingAccount = null;
+      snapshot = await api('/state');
+    } catch (e) {
+      report(e);
+    } finally {
+      adminBusy = false;
+    }
+  }
+  async function deleteAccount(account: User) {
+    if (
+      !confirm(
+        `Apagar a conta de ${account.username}, suas mensagens e convites? Esta ação é permanente.`,
+      )
+    )
+      return;
+    adminBusy = true;
+    try {
+      await api(`/users/${account.id}`, { method: 'DELETE' });
+      snapshot = await api('/state');
+    } catch (e) {
+      report(e);
+    } finally {
+      adminBusy = false;
+    }
+  }
+  async function disconnectAccount(account: User) {
+    adminBusy = true;
+    try {
+      await post(`/users/${account.id}/disconnect`);
+      snapshot = await api('/state');
     } catch (e) {
       report(e);
     } finally {
@@ -436,9 +492,7 @@
       {#if user.role === 'admin'}<button
           class="invite-button"
           onclick={() => (adminPanel = true)}
-          ><UserPlus size={17} />Convidar amigos<ChevronRight
-            size={15}
-          /></button
+          ><UserPlus size={17} />Administração<ChevronRight size={15} /></button
         >{/if}
       <div class="self">
         <div class="avatar">
@@ -708,11 +762,99 @@
       aria-labelledby="admin-title"
     >
       <div class="modal-title">
-        <h2 id="admin-title">Nosso espaço</h2>
+        <h2 id="admin-title">Administração</h2>
         <button aria-label="Fechar" onclick={() => (adminPanel = false)}
           ><X /></button
         >
       </div>
+      <h3>Usuários</h3>
+      <label
+        >Buscar usuário<input
+          aria-label="Buscar usuário"
+          bind:value={accountSearch}
+        /></label
+      >
+      <div class="admin-channels">
+        {#each snapshot.users.filter( (u) => u.username.includes(accountSearch.toLowerCase()) ) as account}
+          <div>
+            <span>{account.username} · {account.role}</span>
+            <button
+              disabled={adminBusy}
+              aria-label={`Editar ${account.username}`}
+              onclick={() => {
+                editingAccount = account;
+                accountName = account.username;
+                accountRole = account.role;
+                accountPassword = '';
+              }}><Pencil size={15} /></button
+            >
+            {#if snapshot.voice.some((v) => v.user_id === account.id)}
+              <button
+                disabled={adminBusy}
+                aria-label={`Tirar ${account.username} da chamada`}
+                onclick={() => disconnectAccount(account)}
+                ><PhoneOff size={15} /></button
+              >
+            {/if}
+            <button
+              disabled={adminBusy}
+              aria-label={`Apagar conta de ${account.username}`}
+              onclick={() => deleteAccount(account)}
+              ><Trash2 size={15} /></button
+            >
+          </div>
+        {/each}
+      </div>
+      <h3>{editingAccount ? 'Editar usuário' : 'Criar usuário'}</h3>
+      <form
+        onsubmit={(e) => {
+          e.preventDefault();
+          void saveAccount();
+        }}
+      >
+        <label
+          >Usuário<input
+            aria-label="Usuário da conta"
+            required
+            minlength="3"
+            maxlength="32"
+            pattern="[a-zA-Z0-9_-]+"
+            bind:value={accountName}
+          /></label
+        >
+        <label
+          >{editingAccount
+            ? 'Nova senha (vazia mantém a atual)'
+            : 'Senha'}<input
+            aria-label="Senha da conta"
+            type="password"
+            autocomplete="new-password"
+            required={!editingAccount}
+            minlength="12"
+            maxlength="128"
+            bind:value={accountPassword}
+          /></label
+        >
+        <p>Alterar a senha encerra as sessões da conta.</p>
+        <label
+          >Role<select aria-label="Role da conta" bind:value={accountRole}
+            ><option value="member">member</option><option value="admin"
+              >admin</option
+            ></select
+          ></label
+        >
+        <button class="primary" disabled={adminBusy}>Salvar usuário</button>
+        {#if editingAccount}<button
+            type="button"
+            onclick={() => {
+              editingAccount = null;
+              accountName = '';
+              accountPassword = '';
+              accountRole = 'member';
+            }}>Cancelar edição</button
+          >{/if}
+      </form>
+      <hr />
       <h3>Convide alguém</h3>
       <p>Um convite por pessoa, válido por 24 horas.</p>
       <button class="primary" disabled={adminBusy} onclick={createInvite}

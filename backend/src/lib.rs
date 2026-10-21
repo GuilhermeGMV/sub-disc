@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod api;
 pub mod auth;
 pub mod channels;
@@ -101,7 +102,12 @@ pub fn app(state: AppState) -> Router {
         .route("/api/logout", post(auth::logout))
         .route("/api/me", get(auth::me))
         .route("/api/invites", post(auth::invite))
-        .route("/api/users", get(api::users))
+        .route("/api/users", get(api::users).post(admin::create))
+        .route(
+            "/api/users/{id}",
+            axum::routing::patch(admin::update).delete(admin::delete),
+        )
+        .route("/api/users/{id}/disconnect", post(admin::disconnect))
         .route("/api/state", get(api::snapshot))
         .route("/api/channels", get(channels::list).post(channels::create))
         .route(

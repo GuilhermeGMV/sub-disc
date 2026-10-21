@@ -23,6 +23,10 @@ pub enum Event {
     Message {
         message: ChatMessage,
     },
+    #[serde(skip)]
+    VoiceRemoved {
+        user_id: String,
+    },
     PresenceChanged,
     ChannelsChanged,
     UsersChanged,
@@ -111,6 +115,7 @@ async fn run(s: AppState, session: Session, socket: WebSocket) {
           let msg=match event{
            Ok(Event::Shutdown)=>break,
            Ok(Event::SessionRevoked{session_hash})=>{if session_hash==session.hash{break}else{continue}},
+           Ok(Event::VoiceRemoved{user_id})=>{if user_id==session.user.id{serde_json::json!({"v":1,"type":"voice_reset"})}else{continue}},
            Ok(Event::PresenceChanged)=>serde_json::json!({"v":1,"type":"presence","online":s.online.lock().await.keys().cloned().collect::<Vec<_>>(),"voice":s.voice.lock().await.values().filter(|l|l.connected).cloned().collect::<Vec<_>>()}),
            Ok(e)=>{let mut v=serde_json::to_value(e).unwrap_or_default();v["v"]=1.into();v},
            Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{match crate::api::state(&s).await{Ok(data)=>serde_json::json!({"v":1,"type":"snapshot","data":data}),Err(_)=>break}},
