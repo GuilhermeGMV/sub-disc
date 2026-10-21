@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Radio, ArrowRight, ShieldCheck } from '@lucide/svelte';
+  import { ArrowRight, ShieldCheck } from '@lucide/svelte';
   import { post } from '../lib/api';
   import { t } from '../lib/i18n';
   import type { User } from '../lib/types';
@@ -41,7 +41,7 @@
 <div class="auth-shell">
   <div class="auth-story">
     <div class="brand">
-      <span class="brand-mark"><Radio /></span>subdisc<span class="beta"
+      <span class="brand-mark"><img src="/kledisc.png" alt="" width="36" height="36" /></span>kledisc<span class="beta"
         >SELF-HOSTED</span
       >
     </div>
@@ -58,7 +58,7 @@
     <small><ShieldCheck size={16} /> Sua comunidade, no seu servidor.</small>
   </div>
   <main class="auth-form">
-    <div class="mobile-brand">◉ subdisc</div>
+    <div class="mobile-brand"><img src="/kledisc.png" alt="" width="28" height="28" /> kledisc</div>
     <span class="eyebrow"
       >{needsSetup
         ? 'BEM-VINDO À SUA INSTÂNCIA'

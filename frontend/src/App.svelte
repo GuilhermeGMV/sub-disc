@@ -429,14 +429,14 @@
     <nav class="server-rail" aria-label="Instância">
       <button
         class="server-logo"
-        aria-label="Subdisc"
-        onclick={() => (mobileNav = !mobileNav)}><Radio size={26} /></button
+        aria-label="kledisc"
+        onclick={() => (mobileNav = !mobileNav)}><img src="/kledisc.png" alt="" width="38" height="38" /></button
       ><span class="rail-line"></span><span class="rail-label">SEU ESPAÇO</span
-      ><span class="rail-bottom">S.</span>
+      ><span class="rail-bottom">K.</span>
     </nav>
     <aside class:mobile-open={mobileNav} class="sidebar">
       <div class="server-title">
-        <div><strong>subdisc</strong><small>Um espaço entre amigos</small></div>
+        <div><strong>kledisc</strong><small>Um espaço entre amigos</small></div>
         <button
           class="mobile-only"
           aria-label="Fechar navegação"

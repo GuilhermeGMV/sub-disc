@@ -1,5 +1,5 @@
 export const ptBR = {
-  brand: 'Subdisc',
+  brand: 'kledisc',
   tagline: 'Seu ponto de encontro.',
   login: 'Entrar',
   register: 'Criar conta',
