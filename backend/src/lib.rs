@@ -120,6 +120,7 @@ pub fn app(state: AppState) -> Router {
         .route("/api/media/leave", post(media::leave))
         .route("/api/livekit/webhook", post(media::webhook))
         .route("/api/ws", get(websocket::upgrade))
+        .route_service("/admin", ServeFile::new(format!("{static_dir}/index.html")))
         .route("/api/{*path}", get(|| async { error::AppError::missing() }))
         .fallback_service(
             ServeDir::new(&static_dir)
