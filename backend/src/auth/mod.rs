@@ -231,9 +231,11 @@ pub async fn register(
     }
     let hash = hash_password(&s, c.password).await?;
     let mut tx = s.db.begin_with("BEGIN IMMEDIATE").await?;
-    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM invites WHERE token_hash=? AND expires_at>? AND used_by IS NULL)").bind(digest(&c.invite)).bind(now()).fetch_one(&mut *tx).await?;
+    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM invites WHERE token_hash=? AND expires_at>? AND use_count < 5)").bind(digest(&c.invite)).bind(now()).fetch_one(&mut *tx).await?;
     if !valid {
-        return Err(AppError::bad("Convite expirado, utilizado ou inválido"));
+        return Err(AppError::bad(
+            "Convite expirado, esgotado (5 cadastros) ou inválido",
+        ));
     }
     let user = User {
         id: uuid::Uuid::new_v4().to_string(),
@@ -248,7 +250,7 @@ pub async fn register(
         .bind(now())
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE invites SET used_by=? WHERE token_hash=?")
+    sqlx::query("UPDATE invites SET used_by=?, use_count=use_count+1 WHERE token_hash=?")
         .bind(&user.id)
         .bind(digest(&c.invite))
         .execute(&mut *tx)
@@ -346,20 +348,19 @@ async fn media_logout(s: &AppState, session: &Session) -> Result<()> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InviteInput {
-    pub hours: i64,
+    // Accepted for compatibility with older clients; validity is always fixed.
+    #[serde(default, rename = "hours")]
+    pub _hours: Option<i64>,
 }
 pub async fn invite(
     State(s): State<AppState>,
     session: Session,
-    Json(input): Json<InviteInput>,
+    Json(_input): Json<InviteInput>,
 ) -> Result<Json<Value>> {
     admin(&session)?;
     s.rate(format!("invites:{}", session.user.id), 10).await?;
-    if !(1..=168).contains(&input.hours) {
-        return Err(AppError::bad("Validade: de 1 a 168 horas"));
-    }
     let raw = token();
-    let expires_at = now() + input.hours * 3600;
+    let expires_at = now() + 24 * 3600;
     sqlx::query("INSERT INTO invites(token_hash,created_by,expires_at) VALUES(?,?,?)")
         .bind(digest(&raw))
         .bind(&session.user.id)
@@ -367,6 +368,6 @@ pub async fn invite(
         .execute(&s.db)
         .await?;
     Ok(Json(
-        json!({"token":raw,"expires_at":expires_at,"url":format!("{}/#invite={raw}",s.config.origin)}),
+        json!({"token":raw,"expires_at":expires_at,"max_uses":5,"uses_remaining":5,"url":format!("{}/#invite={raw}",s.config.origin)}),
     ))
 }

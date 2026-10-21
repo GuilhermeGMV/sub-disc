@@ -194,7 +194,7 @@ async fn sessions_renew_while_in_use() {
     assert!(c.starts_with(token));
 }
 #[tokio::test]
-async fn invitations_are_private_expiring_single_use_and_atomic() {
+async fn invitations_are_private_expiring_and_atomic() {
     let t = TestApp::new().await;
     let admin = t.admin().await;
     let member = t.member(&admin).await;
@@ -867,4 +867,70 @@ async fn concurrent_demotions_preserve_an_administrator() {
         .await
         .unwrap();
     assert_eq!(admins, 1);
+}
+
+#[tokio::test]
+async fn invites_have_fixed_expiry_and_five_atomic_uses() {
+    let t = TestApp::new().await;
+    let admin = t.admin().await;
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let (status, invite, _) = t
+        .call("POST", "/api/invites", json!({"hours":168}), &admin)
+        .await;
+    assert_eq!(status, 200);
+    let expiry = invite["expires_at"].as_i64().unwrap();
+    assert!(
+        expiry >= before + 86400
+            && expiry
+                <= std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64
+                    + 86400
+    );
+    assert_eq!(invite["max_uses"], 5);
+    // Duplicate username fails inside the transaction and must not spend a use.
+    assert_eq!(
+        t.call(
+            "POST",
+            "/api/register",
+            json!({"username":"admin", "password":"strong password 123", "invite":invite["token"]}),
+            ""
+        )
+        .await
+        .0,
+        409
+    );
+    let register = |index| {
+        t.call("POST", "/api/register", json!({"username":format!("guest{index}"), "password":"strong password 123", "invite":invite["token"]}), "")
+    };
+    // Stay below the password-hashing concurrency limit while racing the
+    // remaining two uses with three distinct registrations.
+    for index in 1..=3 {
+        assert_eq!(register(index).await.0, 200);
+    }
+    let results = tokio::join!(register(4), register(5), register(6));
+    let statuses = [results.0.0, results.1.0, results.2.0];
+    assert_eq!(statuses.iter().filter(|s| **s == 200).count(), 2);
+    assert_eq!(statuses.iter().filter(|s| **s == 400).count(), 1);
+    let row: (i64, i64) = sqlx::query_as("SELECT use_count, expires_at FROM invites")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(row, (5, expiry));
+    let (status, fresh, _) = t.call("POST", "/api/invites", json!({}), &admin).await;
+    assert_eq!(status, 200);
+    sqlx::query("UPDATE invites SET expires_at=0 WHERE use_count=0")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(t.call("POST", "/api/register", json!({"username":"expired", "password":"strong password 123", "invite":fresh["token"]}), "").await.0, 400);
+    let count: i64 = sqlx::query_scalar("SELECT use_count FROM invites WHERE expires_at=0")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
 }

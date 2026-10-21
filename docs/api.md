@@ -11,7 +11,7 @@ Todas as rotas usam `/api`. Respostas JSON; falhas de aplicação têm `{"error"
 | POST `/register` | `username`, `password`, `invite` | Convite válido |
 | POST `/logout` | `{}` | Sessão |
 | GET `/me` | Usuário da sessão | Sessão |
-| POST `/invites` | `hours`: 1–168; retorna token e URL | Administrador |
+| POST `/invites` | `{}`; validade fixa de 24 h, até 5 cadastros; retorna `token`, `url`, `expires_at`, `max_uses` e `uses_remaining` | Administrador |
 | GET `/users` | IDs opacos, nomes, papéis | Sessão |
 | POST `/users` | `username`, `password` (12–128 bytes), `role`: admin/member | Administrador |
 | PATCH `/users/:id` | `username`, `role`; `password` opcional/vazia mantém a atual | Administrador |
@@ -66,3 +66,5 @@ conta remove também suas mensagens e os convites criados ou usados por ela,
 por isso a interface solicita confirmação. Tirar alguém da chamada invalida
 seu lease, remove o participante do LiveKit e envia `voice_reset` apenas às conexões
 daquela conta. O usuário continua autenticado e pode entrar novamente.
+
+Convites novos expiram exatamente 24 horas após a criação. Usar o link não renova o prazo; somente cadastros concluídos consomem um uso, com limite de cinco inclusive em acessos simultâneos. O campo legado `hours` é aceito, mas ignorado. `uses_remaining` na resposta de criação é 5 (não é um contador atualizado em tempo real). A migração preserva a expiração dos convites anteriores e mantém inválidos os que já haviam sido consumidos.

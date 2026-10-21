@@ -218,7 +218,7 @@ O nome interno do executável/banco continua `subdisc`; a marca exibida é **kle
 ## Primeiro acesso e verificação
 
 1. Abra `https://chat.exemplo.com` e use a `SETUP_KEY` do seu `.env` para criar o primeiro administrador. Usuário: 3–32 caracteres ASCII (letras, números, `_`, `-`); senha: pelo menos 12 caracteres.
-2. Use o painel de administração para gerenciar usuários, permissões `admin`/`member` e canais, ou gere convites para cadastro.
+2. Use o painel de administração para gerenciar usuários, permissões `admin`/`member` e canais, ou gere convites para cadastro. Cada novo link vale por 24 horas desde a criação e aceita até 5 cadastros; o uso não renova o prazo.
 3. Entre em uma sala de voz e teste microfone, câmera e tela com outro participante, de preferência em outra rede.
 4. No cliente nativo, informe o domínio do **chat**, não o domínio `rtc`.
 

@@ -287,7 +287,7 @@
   async function createInvite() {
     adminBusy = true;
     try {
-      const r = await post<{ url: string }>('/invites', { hours: 24 });
+      const r = await post<{ url: string }>('/invites', {});
       inviteUrl = r.url;
     } catch (e) {
       report(e);
@@ -864,7 +864,7 @@
       </form>
       <hr />
       <h3>Convide alguém</h3>
-      <p>Um convite por pessoa, válido por 24 horas.</p>
+      <p>Cada convite permite até 5 cadastros em 24 horas, contadas desde a criação.</p>
       <button class="primary" disabled={adminBusy} onclick={createInvite}
         ><UserPlus size={17} />Gerar convite</button
       >{#if inviteUrl}<label
