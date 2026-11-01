@@ -781,11 +781,30 @@ kbd {
   white-space: nowrap;
   font-size: 10px;
 }
+.screen-brightness {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 130px;
+  min-width: 70px;
+  color: #dbece4;
+}
+.screen-brightness input {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+.video-label .screen-brightness + .screen-volume,
+.video-label .screen-brightness + .screen-no-audio {
+  margin-left: 0;
+}
 .video-label .screen-volume + button,
 .video-label .screen-no-audio + button {
   margin-left: 0;
 }
 .media-track video {
+  filter: brightness(var(--screen-brightness, 1));
   display: block;
   width: 100%;
   height: 100%;
