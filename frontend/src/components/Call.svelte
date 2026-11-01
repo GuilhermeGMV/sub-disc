@@ -7,8 +7,17 @@
     Volume2,
     Maximize2,
     Minimize2,
+    Sun,
   } from '@lucide/svelte';
-  import { media, participantVolume, savedVolume } from '../stores/media';
+  import {
+    media,
+    participantVolume,
+    savedVolume,
+    savedBrightness,
+    screenBrightness,
+    BRIGHTNESS_MIN,
+    BRIGHTNESS_MAX,
+  } from '../stores/media';
   import MediaTrack from './MediaTrack.svelte';
   let expanded = '';
   $: participants = ($media.revision, $media.participants);
@@ -94,6 +103,10 @@
             class:expanded={expanded === v.pub.trackSid}
             class:concealed={!!expanded && expanded !== v.pub.trackSid}
             class="video-tile"
+            style:--screen-brightness={v.track.source ===
+              Track.Source.ScreenShare && !v.p.isLocal
+              ? savedBrightness(v.p.identity)
+              : 1}
           >
             <MediaTrack track={v.track} participant={v.p} local={v.p.isLocal} />
             <div class="video-label">
@@ -105,6 +118,22 @@
                   : 'Câmera'}</span
               >
               {#if v.track.source === Track.Source.ScreenShare && !v.p.isLocal}
+                <label
+                  class="screen-brightness"
+                  title={`Brilho da tela de ${v.p.name} (só para você, fica salvo)`}
+                >
+                  <Sun size={15} />
+                  <input
+                    type="range"
+                    min={BRIGHTNESS_MIN}
+                    max={BRIGHTNESS_MAX}
+                    step="0.05"
+                    aria-label={`Brilho da tela de ${v.p.name}`}
+                    value={savedBrightness(v.p.identity)}
+                    oninput={(e) =>
+                      screenBrightness(v.p.identity, +e.currentTarget.value)}
+                  />
+                </label>
                 {#if v.p.getTrackPublication(Track.Source.ScreenShareAudio)?.track}
                   <label
                     class="screen-volume"

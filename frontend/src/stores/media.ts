@@ -455,6 +455,48 @@ export function participantVolume(
   if (p) applyVolumes(p, s.deafened);
   media.update((current) => ({ ...current, revision: current.revision + 1 }));
 }
+const BRIGHTNESS_KEY = 'subdisc:screen-brightness';
+export const BRIGHTNESS_MIN = 0.3;
+export const BRIGHTNESS_MAX = 1.5;
+const clampBrightness = (value: number) =>
+  Number.isFinite(value)
+    ? Math.max(BRIGHTNESS_MIN, Math.min(BRIGHTNESS_MAX, value))
+    : 1;
+// Brilho local do compartilhamento de tela, salvo por quem compartilha (usuário).
+const brightness = loadBrightness();
+function loadBrightness() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(BRIGHTNESS_KEY) ?? '{}');
+    return new Map(
+      Object.entries(saved).filter(
+        (e): e is [string, number] =>
+          typeof e[1] === 'number' &&
+          e[1] >= BRIGHTNESS_MIN &&
+          e[1] <= BRIGHTNESS_MAX,
+      ),
+    );
+  } catch {
+    return new Map<string, number>();
+  }
+}
+export function savedBrightness(identity: string) {
+  return brightness.get(userOf(identity)) ?? 1;
+}
+export function screenBrightness(identity: string, value: number) {
+  const user = userOf(identity);
+  const next = clampBrightness(value);
+  if (next === 1) brightness.delete(user);
+  else brightness.set(user, next);
+  try {
+    localStorage.setItem(
+      BRIGHTNESS_KEY,
+      JSON.stringify(Object.fromEntries(brightness)),
+    );
+  } catch {
+    // Sem armazenamento (ex.: janela privada): vale só nesta sessão.
+  }
+  media.update((current) => ({ ...current, revision: current.revision + 1 }));
+}
 export function toggleDeafen() {
   media.update((s) => {
     const deafened = !s.deafened;
